@@ -2,7 +2,7 @@
 name = "cloudflareip-renewdns"
 
 # 2. 指定入口文件
-main = "worker.js"
+main = "cfworker.js"
 
 # 3. 设定兼容性日期
 compatibility_date = "2024-03-01"
