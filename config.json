@@ -1,0 +1,38 @@
+﻿{
+    "cloudflare":  {
+                       "api_token":  "KTELwAXIsL1ZKr72KEQ47akSK3_0fQ80cura5ew7",
+                       "//_api_token":  "Cloudflare 的 Scoped Token，需具备 DNS:Edit 权限",
+                       "zone_id":  "0aac171026a170d5688bb1c7b0327aa4",
+                       "//_zone_id":  "域名所在的区域 ID (Zone ID)",
+                       "dns_name":  "cf.xiaoliu.sbs",
+                       "//_dns_name":  "需要自动更新的域名"
+                   },
+    "telegram":  {
+                     "base_url":  "https://tgbot.xiaoliu.sbs",
+                     "//_base_url":  "Telegram Bot API 的 Base URL，如使用自建代理可修改此项",
+                     "auth_key":  "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk",
+                     "//_auth_key":  "CF Worker 的鉴权密钥，对应 Worker 中的 x-auth-key Header",
+                     "bot_token":  "8678954550:AAG-N-j8U0Io4Ln8Z94-1sQvSEZUryqH1I8",
+                     "//_bot_token":  "Telegram Bot 的 Token",
+                     "chat_id":  "8722639941,6038859511",
+                     "//_chat_id":  "接收通知的 Telegram 用户或群组 ID，多个请用逗号分隔"
+                 },
+    "settings":  {
+                     "ip_sources":  [
+                                        "http://tgbot.xiaoliu.sbs/all"
+                                    ],
+                     "//_ip_sources":  "IP 来源网站列表，已通过 CF Worker 代理访问",
+                     "max_ips":  200,
+                     "//_max_ips":  "cfst 延迟测速的并发线程数（不是测试的 IP 数量，所有从 ip.txt 读入的 IP 都会被测试）",
+                     "top_n":  10,
+                     "//_top_n":  "延迟排名后，选取前几名参与下载测速（越大结果越准确但越慢，10 是性价比最高的值）",
+                     "timeout":  15,
+                     "//_timeout":  "网络请求超时时间 (秒)",
+                     "enable_dns_update":  true,
+                     "//_enable_dns_update":  "是否自动更新 Cloudflare 域名解析",
+                     "max_retries":  3,
+                     "//_max_retries":  "测速结果下载速度为 0 时自动重试的最大次数",
+                     "ip_api_url":  "http://tgbot.xiaoliu.sbs/all",
+                     "auth_key":  "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk"
+                 }
+}
