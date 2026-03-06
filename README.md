@@ -1,5 +1,3 @@
----
-
 # 🚀 CloudFlareIP-RenewDNS
 
 一个基于 Cloudflare Workers 的优选 IP 聚合、清洗与运营商自动分类工具。
@@ -12,7 +10,6 @@
 * **专项代理**：内置 Telegram (`/tg`) 和 Cloudflare (`/cf`) API 代理功能。
 * **自动联动**：修改配置即可自动更新 UI。
 
----
 
 ## 🛠️ 如何部署到你自己的 Cloudflare
 
@@ -28,7 +25,6 @@
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wzlinbin/CloudFlareIP-RenewDNS/new/main?filename=README.md)
 
 
----
 
 ## 📖 使用指南
 
@@ -36,10 +32,7 @@
 * **TG 代理**：访问 `你的域名/tg/bot<token>/sendMessage`。
 * **CF 代理**：访问 `你的域名/cf/client/v4/zones`。
 
----
 
 ## 📝 贡献与反馈
 
 如果你有任何建议或发现了 Bug，欢迎提交 [Issues]。
-
----
