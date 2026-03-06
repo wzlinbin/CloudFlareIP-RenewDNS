@@ -5,4 +5,4 @@ name = "cloudflareip-renewdns"
 main = "cfworker.js"
 
 # 3. 设定兼容性日期
-compatibility_date = "2024-03-01"
+compatibility_date = "2026-03-01"

@@ -1,19 +1,23 @@
-name: Deploy to Cloudflare Workers
+name: Deploy Worker
 
 on:
   push:
     branches:
-      - main  # 当你向 main 分支推送时触发
+      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    name: Deploy to Cloudflare
     steps:
-      - name: Checkout Repo
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy Worker
+      - name: Deploy using Wrangler
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # 强制指定使用最新的 v4 版本，消除所有过时警告
+          wranglerVersion: '4' 
+          command: deploy
