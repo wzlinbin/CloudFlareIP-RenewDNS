@@ -1,6 +1,12 @@
-name = "CloudFlareIP-RenewDNS"
-main = "cfworker.js"
-compatibility_date = "2026-03-06"
+# 1. 修正名称为全小写
+name = "cloudflareip-renewdns"
 
-[compatibility_flags]
-python_discovery = true
+# 2. 指定入口文件
+main = "worker.js"
+
+# 3. 设定兼容性日期
+compatibility_date = "2024-03-01"
+
+# 4. 如果不需要特定标志，建议先注释掉；
+# 如果确实需要 Python 发现功能，应写成字符串数组格式（如下）：
+# compatibility_flags = [ "python_discovery" ]
