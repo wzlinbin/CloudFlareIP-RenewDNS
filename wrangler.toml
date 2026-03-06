@@ -1,0 +1,6 @@
+name = "CloudFlareIP-RenewDNS"
+main = "cfworker.js"  # 
+compatibility_date = "2026-03-06"
+
+[compatibility_flags]
+python_discovery = true
