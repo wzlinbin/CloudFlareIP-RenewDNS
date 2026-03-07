@@ -1168,9 +1168,9 @@ def fetch_ips(config, current_ip=None):
         headers, auth_mode = _build_ip_api_headers(config, source_url, timeout)
         try:
             if auth_mode == "none-custom":
-                print(f"正在从自建IP源获取 IP 数据: {source_url} (auth={auth_mode})")
+                print(f"正在从自建IP源获取 IP 数据 (auth={auth_mode})")
             else:
-                print(f"正在从软件官方接口获取 IP 数据: {source_url} (auth={auth_mode})")
+                print(f"正在从软件官方接口获取 IP 数据 (auth={auth_mode})")
             resp = requests.get(source_url, headers=headers, timeout=timeout)
             resp.raise_for_status()
 
@@ -2164,7 +2164,7 @@ def main():
                     return
                 ip_pool_loaded = True
             else:
-                print("复用已缓存的 ip.txt，不重新请求后端 IP 源。")
+                print("IP源刷新频率：60分钟，不重新请求后端 IP 源。")
 
             best_ip, speed, region = run_speed_test(config)
             try:

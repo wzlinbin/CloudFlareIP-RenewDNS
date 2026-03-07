@@ -88,6 +88,121 @@ function jsonResponse(body, status = 200, extraHeaders = {}) {
   });
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildTksPage(env) {
+  const title = escapeHtml(env.TKS_TITLE || "Thanks");
+  const descRaw = String(
+    env.TKS_TEXT || "This page is powered by Cloudflare Workers."
+  );
+  const imageUrl = String(env.TKS_IMAGE_URL || "").trim();
+  const safeImageUrl = escapeHtml(imageUrl);
+  const paragraphs = descRaw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => `<p>${escapeHtml(line)}</p>`)
+    .join("\n");
+
+  const imageBlock = safeImageUrl
+    ? `<img src="${safeImageUrl}" alt="tks-image" />`
+    : `<div class="placeholder">Set TKS_IMAGE_URL to show your image.</div>`;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title}</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #6b7280;
+      --line: #d9deea;
+      --shadow: 0 10px 35px rgba(16, 24, 40, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(145deg, #eef2ff, #f8fafc);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+    .card {
+      width: min(760px, 96vw);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .media {
+      width: 100%;
+      background: #f1f5f9;
+      display: grid;
+      place-items: center;
+      min-height: 180px;
+    }
+    img {
+      width: 100%;
+      height: auto;
+      display: block;
+      max-height: 460px;
+      object-fit: cover;
+    }
+    .placeholder {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 24px;
+      text-align: center;
+    }
+    .content {
+      padding: 24px;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 28px;
+      line-height: 1.2;
+      letter-spacing: 0.2px;
+    }
+    p {
+      margin: 0 0 10px;
+      color: #3f4759;
+      line-height: 1.6;
+    }
+    .footer {
+      padding: 0 24px 20px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <section class="media">${imageBlock}</section>
+    <section class="content">
+      <h1>${title}</h1>
+      ${paragraphs || "<p>No description.</p>"}
+    </section>
+    <div class="footer">Path: /tks</div>
+  </main>
+</body>
+</html>`;
+}
+
 function isValidClientId(value) {
   return /^[A-Za-z0-9._:@-]{3,128}$/.test(value);
 }
@@ -494,6 +609,15 @@ export default {
           "X-Role": authContext.role,
           "X-Auth-Mode": authContext.authMode,
           "Cache-Control": "public, max-age=3600"
+        }
+      });
+    }
+
+    if (path === "/tks") {
+      return new Response(buildTksPage(env), {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store"
         }
       });
     }
