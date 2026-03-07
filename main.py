@@ -74,38 +74,14 @@ def _strip_html_tags(value):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _fetch_tks_sponsor_text():
-    try:
-        resp = requests.get(TKS_PAGE_URL, timeout=10)
-        resp.raise_for_status()
-        html = (resp.text or "").strip()
-        if not html:
-            return ""
-    except Exception:
-        return ""
-
-    compact_html = re.sub(r"\s+", " ", html)
-    m = re.search(r"项目赞助人员[：:]\s*(.*?)</p>", compact_html, flags=re.IGNORECASE)
-    if m:
-        return _strip_html_tags(m.group(1))
-
-    plain = _strip_html_tags(compact_html)
-    m = re.search(r"项目赞助人员[：:]\s*([^。；;\n\r]+)", plain)
-    if m:
-        return m.group(1).strip()
-    return ""
-
-
 def _show_tks_page_content():
-    sponsor_text = _fetch_tks_sponsor_text()
     print("\n========致谢========")
     print("感谢https://github.com/XIU2/CloudflareSpeedTest 项目，提供了测速模块能力。")
     print("本项目GitHub地址：https://github.com/wzlinbin/CloudFlareIP-RenewDNS")
     print("如果这个软件对你有帮助，麻烦给个🌟，也可以点击下面链接请作者喝杯咖啡，并将您的赞助列入项目支持人员列表")
-    if sponsor_text:
-        print(f"本项目赞助人员感谢人员：{sponsor_text}")
-    else:
-        print("本项目赞助人员感谢人员：获取失败，请访问 https://cloudflareip.ocisg.xyz/tks 查看")
+    print("本项目赞助人员感谢人员："
+           \
+    "https://cloudflareip.ocisg.xyz/tks")
     print("========================")
    
 
