@@ -19,7 +19,7 @@
                  },
     "settings":  {
                      "ip_sources":  [
-                                        "http://tgbot.xiaoliu.sbs/all"
+                                        "https://cloudflareip.ocisg.xyz/api/data"
                                     ],
                      "//_ip_sources":  "IP 来源网站列表，已通过 CF Worker 代理访问",
                      "max_ips":  200,
@@ -32,7 +32,7 @@
                      "//_enable_dns_update":  "是否自动更新 Cloudflare 域名解析",
                      "max_retries":  3,
                      "//_max_retries":  "测速结果下载速度为 0 时自动重试的最大次数",
-                     "ip_api_url":  "http://tgbot.xiaoliu.sbs/all",
+                     "ip_api_url":  "https://cloudflareip.ocisg.xyz/api/data",
                      "auth_key":  "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk"
                  }
 }

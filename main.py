@@ -1,10 +1,18 @@
-﻿import requests
+﻿
+import requests
 import re
 import os
 import json
 import subprocess
 import csv
 import sys
+import hashlib
+import hmac
+import time
+import secrets
+import platform
+import uuid
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Windows 终端强制 UTF-8 输出，避免 emoji / 中文字符编码错误
@@ -31,6 +39,103 @@ def _safe_int(value, default, min_value=1):
     if parsed < min_value:
         return default
     return parsed
+
+
+DEFAULT_IP_SOURCE_URL = "https://cloudflareip.ocisg.xyz/api/data"
+LEGACY_IP_SOURCE_URLS = {
+    "http://tgbot.xiaoliu.sbs/all",
+    "https://tgbot.xiaoliu.sbs/all",
+}
+
+
+def _default_hwid():
+    seed = "|".join([
+        platform.system(),
+        platform.machine(),
+        platform.node(),
+        str(uuid.getnode()),
+    ])
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return f"hwid-{digest[:24]}"
+
+
+def _build_signed_worker_headers(url, method, client_id, client_secret, hwid):
+    ts = str(int(time.time()))
+    nonce = secrets.token_urlsafe(18)
+    path = urlparse(url).path or "/"
+    canonical = f"{method.upper()}\n{path}\n{ts}\n{nonce}\n{hwid}"
+    token = hmac.new(
+        client_secret.encode("utf-8"),
+        canonical.encode("utf-8"),
+        digestmod=hashlib.sha256
+    ).hexdigest()
+    return {
+        "x-client-id": client_id,
+        "x-hwid": hwid,
+        "x-ts": ts,
+        "x-nonce": nonce,
+        "x-token": token,
+    }
+
+
+def _resolve_ip_source_urls(settings):
+    urls = []
+    ip_sources = settings.get("ip_sources")
+    if isinstance(ip_sources, list):
+        urls.extend([u.strip() for u in ip_sources if isinstance(u, str) and u.strip()])
+    elif isinstance(ip_sources, str) and ip_sources.strip():
+        urls.append(ip_sources.strip())
+
+    single_url = settings.get("ip_api_url")
+    if isinstance(single_url, str) and single_url.strip():
+        urls.append(single_url.strip())
+
+    if not urls:
+        urls = [DEFAULT_IP_SOURCE_URL]
+
+    normalized = []
+    for url in urls:
+        normalized.append(DEFAULT_IP_SOURCE_URL if url in LEGACY_IP_SOURCE_URLS else url)
+
+    deduped = []
+    seen = set()
+    for url in normalized:
+        if url not in seen:
+            seen.add(url)
+            deduped.append(url)
+    return deduped
+
+
+def _build_ip_api_headers(config, source_url):
+    settings = config.get("settings", {})
+
+    client_id = (
+        settings.get("auth_client_id")
+        or settings.get("client_id")
+        or config.get("telegram", {}).get("client_id")
+        or ""
+    )
+    client_secret = (
+        settings.get("auth_client_secret")
+        or settings.get("client_secret")
+        or config.get("telegram", {}).get("client_secret")
+        or ""
+    )
+
+    if client_id and client_secret:
+        hwid = settings.get("auth_hwid") or settings.get("hwid") or _default_hwid()
+        return _build_signed_worker_headers(
+            source_url,
+            "GET",
+            client_id=client_id,
+            client_secret=client_secret,
+            hwid=hwid
+        ), "signed-v1"
+
+    auth_key = settings.get("auth_key") or config.get("telegram", {}).get("auth_key", "")
+    if auth_key:
+        return {"x-auth-key": auth_key}, "admin-key"
+    return {}, "none"
 
 
 # ============================================================
@@ -113,27 +218,45 @@ def get_current_dns_ip(config):
 def fetch_ips(config, current_ip=None):
     """从统一接口拉取 IP，并与当前解析 IP 合并后写入 ip.txt"""
     settings = config.get('settings', {})
-    source_url = settings.get('ip_api_url') or "http://tgbot.xiaoliu.sbs/all"
+    source_urls = _resolve_ip_source_urls(settings)
     timeout = _safe_int(settings.get('timeout', 15), 15, min_value=1)
-    default_auth = "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk"
-    auth_key = settings.get('auth_key') or config.get('telegram', {}).get('auth_key', '') or default_auth
-    headers = {"x-auth-key": auth_key} if auth_key else {}
     ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
     all_ips = set()
+    success_count = 0
 
     if current_ip:
         all_ips.add(current_ip)
         print(f"已将当前解析 IP {current_ip} 加入测速池进行对比。")
 
-    try:
-        print(f"正在从接口获取 IP 数据: {source_url}")
-        resp = requests.get(source_url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        api_ips = re.findall(ip_pattern, resp.text)
-        all_ips.update(api_ips)
-        print(f"接口返回 {len(api_ips)} 条 IPv4，去重后共 {len(all_ips)} 条待测速。")
-    except Exception as e:
-        print(f"错误: 从 {source_url} 获取 IP 失败: {e}")
+    for source_url in source_urls:
+        headers, auth_mode = _build_ip_api_headers(config, source_url)
+        try:
+            print(f"正在从接口获取 IP 数据: {source_url} (auth={auth_mode})")
+            resp = requests.get(source_url, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+
+            api_ips = []
+            try:
+                payload = resp.json()
+                unique_ips = payload.get("global", {}).get("unique_ips", [])
+                if isinstance(unique_ips, list):
+                    api_ips.extend([str(ip).strip() for ip in unique_ips if str(ip).strip()])
+            except Exception:
+                pass
+
+            if not api_ips:
+                api_ips = re.findall(ip_pattern, resp.text)
+
+            all_ips.update(api_ips)
+            success_count += 1
+            print(f"接口返回 {len(api_ips)} 条 IPv4，当前去重后共 {len(all_ips)} 条待测速。")
+        except Exception as e:
+            print(f"错误: 从 {source_url} 获取 IP 失败: {e}")
+
+    if success_count == 0:
+        if os.path.exists('ip.txt') and os.path.getsize('ip.txt') > 0:
+            print("检测到现有的 ip.txt 文件，将使用缓存的 IP 数据继续测速。")
+            return True
         return False
 
     if not all_ips:
@@ -321,11 +444,40 @@ def main():
     # 1. 加载配置
     config = load_config()
 
-    enable_dns_update = config.get('settings', {}).get('enable_dns_update', True)
-    max_retries       = _safe_int(config.get('settings', {}).get('max_retries', 3), 3, min_value=1)
+    # 用户选择模式
+    print("请选择模式：")
+    print("1. 快速测速提供优选IP")
+    print("2. 已有CF托管域名，使用优选IP动态更新")
+    choice = input("> ").strip()
+    if choice == '1':
+        enable_dns_update = False
+        print("已选择快速测速模式，将仅提供优选IP，不更新域名。")
+    elif choice == '2':
+        print("请选择IP源：")
+        print("A. 使用软件官方源进行测速并更新域名解析")
+        print("B. 自建优选IP源进行测速并更新域名解析")
+        sub_choice = input("> ").strip().upper()
+        if sub_choice == 'A':
+            print("已选择官方源进行测速并更新域名。")
+        elif sub_choice == 'B':
+            custom_url = input("请输入自建优选IP源URL: ").strip()
+            if custom_url:
+                config['settings']['ip_api_url'] = custom_url
+                print(f"已设置自建源: {custom_url}")
+            else:
+                print("URL 为空，使用默认官方源。")
+        else:
+            print("无效选择，退出。")
+            return
+        enable_dns_update = True
+    else:
+        print("无效选择，退出。")
+        return
+
+    max_retries = _safe_int(config.get('settings', {}).get('max_retries', 3), 3, min_value=1)
 
     # 2. 网络检测（主线程，翻墙状态下暂停后退出）
-    check_network_environment()
+    # check_network_environment()  # 暂时关闭网络环境检测
 
     # 3. 获取当前 DNS IP（仅开启 DNS 更新时）
     current_ip = get_current_dns_ip(config) if enable_dns_update else None
@@ -416,14 +568,14 @@ def main():
                        f"解析 IP: <b>{sel_ip}</b>\n"
                        f"地区码: <b>{sel_reg}</b>\n"
                        f"实测速度: <b>{sel_spd} MB/s</b>")
-                push_notification(config, msg)
+                # push_notification(config, msg)  # 临时注释推送功能
             elif update_status == "NO_CHANGE":
                 print("状态: 当前 IP 已是最优，无需更新。")
             else:
                 msg = (f"❌ <b>CF 优选 IP 更新失败</b>\n"
                        f"最优 IP: {sel_ip}\n"
                        f"原因: API 调用报错，请检查日志或令牌权限。")
-                push_notification(config, msg)
+                # push_notification(config, msg)  # 临时注释推送功能
             break  # 更新完成，退出大循环
         else:
             print("状态: DNS 自动更新已禁用，仅推送优选结果。")
@@ -432,7 +584,7 @@ def main():
                    f"地区码: <b>{region}</b>\n"
                    f"实测速度: <b>{speed} MB/s</b>\n"
                    f"<i>(提示：由于禁用了自动更新域名，请手动修改您的优选信息。)</i>")
-            push_notification(config, msg)
+            # push_notification(config, msg)  # 临时注释推送功能
             break  # 无需确认，直接结束
 
     _exit_with_pause(0)

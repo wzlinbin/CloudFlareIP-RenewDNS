@@ -1,0 +1,177 @@
+/**
+ * 鑱氬悎浠ｇ悊 SaaS 缁堟瀬鐗?(宸蹭慨澶嶅彉閲忓懡鍚嶈娉曢敊璇?
+ * 淇鐐癸細灏?env.KV-name 缁熶竴淇敼涓?env.KV
+ */
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // ================= 鈿欙笍 閰嶇疆鍖哄煙 =================
+    const ADMIN_KEY = env.SECRET_KEY; 
+    // Turnstile/registration no longer used, page removed
+    const DISABLE_AUTH = env.DISABLE_AUTH === 'true';  // 鏂板寮€鍏筹細璁句负 'true' 鍙复鏃剁粫杩囪璇?
+    const DATA_CACHE_KEY = "system_aggregated_data_v1";
+    const CACHE_TTL = 3600; 
+    const STATS_SAMPLE_RATE = 0.05; 
+
+    // 娉ㄦ剰锛氳纭繚 Cloudflare 鎺у埗鍙扮粦瀹氱殑 KV 鍙橀噺鍚嶅氨鏄?KV
+    const MY_KV = env.KV; 
+
+    const SOURCES = {
+      "wetest": "https://www.wetest.vip/page/cloudflare/address_v4.html",
+      "uouin":  "https://api.uouin.com/cloudflare.html",
+      "v2too":  "https://ip.v2too.top",
+      "xyz":    "https://ip.164746.xyz",
+      "vps789": "https://vps789.com/public/sum/cfIpApi",
+      "vvhan":  "https://api.4ce.cn/api/bestCFIP",
+      "mrxn":   "https://raw.githubusercontent.com/xingpingcn/enhanced-FaaS-in-China/refs/heads/main/Vercel.json"
+    };
+
+        const clientKey = request.headers.get("x-auth-key") || url.searchParams.get("key");
+    const isProtectedRoute = path === "/" || path === "/api/data" || path.startsWith("/tg") || path.startsWith("/cf");
+
+    // Global auth gate: DISABLE_AUTH controls all protected routes.
+    let isAuthorized = DISABLE_AUTH;
+    let userRole = DISABLE_AUTH ? "bypass" : "guest";
+    let currentUserData = null;
+
+    if (!DISABLE_AUTH) {
+      if (ADMIN_KEY && clientKey === ADMIN_KEY) {
+        isAuthorized = true;
+        userRole = "admin";
+      } else if (clientKey && MY_KV) {
+        const userJson = await MY_KV.get(clientKey);
+        if (userJson) {
+          isAuthorized = true;
+          userRole = "user";
+          try { currentUserData = JSON.parse(userJson); } catch (e) {}
+        }
+      }
+    }
+
+    if (isProtectedRoute && !isAuthorized) {
+      return new Response(JSON.stringify({ error: "Access Denied" }), {
+        status: 403,
+        headers: { "content-type": "application/json" }
+      });
+    }
+// 1. 棣栭〉锛氫粎杩斿洖鍚勬ā鍧楃姸鎬侊紝涓嶅寘鍚敞鍐岄〉闈?
+    if (path === "/") {
+       const status = {
+           kv_bound: !!MY_KV,
+           cache_ttl: CACHE_TTL,
+           sources: Object.keys(SOURCES)
+       };
+       return new Response(JSON.stringify(status, null, 2), { headers: { "content-type": "application/json" } });
+    }
+
+    // 2. 娉ㄥ唽鎺ュ彛鍙婄鐞嗗憳鏌ヨ宸插彇娑堬紝姝?Worker 浠呮彁渚?/api/data 鎺ュ彛銆?
+    // 濡傛灉闇€瑕佹敞鍐?绠＄悊鍔熻兘锛岃浣跨敤鐙珛鏈嶅姟鎴栧湪澶栭儴澶勭悊銆?
+
+    // 4. 鑱氬悎閫昏緫 -> 鏀逛负 /api/data锛屽彇娑?/all
+    if (path === "/api/data") {
+      const hwid = request.headers.get("x-hwid") || url.searchParams.get("hwid");
+      const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('x-forwarded-for');
+
+      // IP+HWID 鍙岄噸棰戠巼闄愬埗 (姣忓垎閽熶竴娆?
+      if (userRole === "user") {
+        if (!ip || !hwid) return new Response(JSON.stringify({ error: "Missing ip or hwid" }), { status: 400, headers: { "content-type": "application/json" } });
+        const rateKey = `rate_${ip}_${hwid}`;
+        const last = await MY_KV.get(rateKey);
+        const now = Date.now();
+        if (last) {
+          const diff = now - parseInt(last, 10);
+          if (diff < 60_000) {
+            return new Response(JSON.stringify({ error: "Too Many Requests" }), { status: 429, headers: { "content-type": "application/json" } });
+          }
+        }
+        ctx.waitUntil(MY_KV.put(rateKey, now.toString(), { expirationTtl: 120 }));
+      }
+
+      // 缁熻閫昏緫
+      if (userRole === "user" && currentUserData && MY_KV && Math.random() < STATS_SAMPLE_RATE) {
+          currentUserData.usage = (currentUserData.usage || 0) + (1 / STATS_SAMPLE_RATE);
+          currentUserData.last_active = new Date().toISOString();
+          ctx.waitUntil(MY_KV.put(clientKey, JSON.stringify(currentUserData)));
+      }
+
+      // 涓€娆℃€?token 澶勭悊
+      if (userRole === "user" && clientKey) {
+        ctx.waitUntil(MY_KV.delete(clientKey));
+      }
+
+      // 鑾峰彇鏁版嵁缂撳瓨
+      if (MY_KV) {
+        const cachedData = await MY_KV.get(DATA_CACHE_KEY);
+        if (cachedData) return new Response(cachedData, { 
+            headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*", "X-Cache": "HIT", "X-Role": userRole, "Cache-Control": "public, max-age=3600" } 
+        });
+      }
+
+      // 鑱氬悎骞舵竻娲?
+      const cleanAndClassify = (rawText) => {
+        const ipRegex = /\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?\d\d?)\b/g;
+        const lines = rawText.split(/[\n\r<]+/).map(l => l.trim());
+        const groups = { "鐢典俊": [], "鑱旈€?: [], "绉诲姩": [], "鍏朵粬": [] };
+        for (const line of lines) {
+          const found = line.match(ipRegex);
+          if (found) {
+            for (const ip of found) {
+              if (ip === "0.0.0.0" || ip === "127.0.0.1") continue;
+              if (line.includes("鐢典俊")) groups["鐢典俊"].push(ip);
+              else if (line.includes("鑱旈€?)) groups["鑱旈€?].push(ip);
+              else if (line.includes("绉诲姩")) groups["绉诲姩"].push(ip);
+              else groups["鍏朵粬"].push(ip);
+            }
+          }
+        }
+        for (const k in groups) groups[k] = [...new Set(groups[k])];
+        return groups;
+      };
+
+      const results = {};
+      await Promise.all(Object.entries(SOURCES).map(async ([key, srcUrl]) => {
+         try {
+             const controller = new AbortController();
+             const id = setTimeout(() => controller.abort(), 5000);
+             const res = await fetch(srcUrl, { signal: controller.signal });
+             clearTimeout(id);
+             const text = (await res.text()).trim();
+             results[key] = cleanAndClassify(text);
+         } catch(e) { results[key] = { error: "fetch" }; }
+      }));
+      
+      const responseBody = JSON.stringify({ timestamp: new Date(), data: results }, null, 2);
+      if (MY_KV) ctx.waitUntil(MY_KV.put(DATA_CACHE_KEY, responseBody, { expirationTtl: CACHE_TTL }));
+      
+      return new Response(responseBody, {
+        headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*", "X-Cache": "MISS", "X-Role": userRole, "Cache-Control": "public, max-age=3600" }
+      });
+    }
+    
+    // TG Proxy
+    if (path.startsWith("/tg")) {
+        const newPath = path.slice(3);
+        const targetUrl = `https://api.telegram.org${newPath}${url.search}`;
+        try {
+            const res = await fetch(targetUrl, { method: request.method, headers: request.headers, body: request.body });
+            return new Response(res.body, { status: res.status, headers: { "Access-Control-Allow-Origin": "*" } });
+        } catch(e) { return new Response(e.message, {status: 500}); }
+    }
+
+    // CF Proxy
+    if (path.startsWith("/cf")) {
+        const newPath = path.slice(3);
+        const targetUrl = `https://api.cloudflare.com${newPath}${url.search}`;
+        try {
+            const res = await fetch(targetUrl, { method: request.method, headers: request.headers, body: request.body });
+            return new Response(res.body, { status: res.status, headers: { "Access-Control-Allow-Origin": "*" } });
+        } catch(e) { return new Response(e.message, {status: 500}); }
+    }
+
+    return new Response("404 Not Found", { status: 404 });
+  }
+};
+
+
