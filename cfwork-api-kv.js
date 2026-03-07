@@ -104,6 +104,16 @@ function isValidToken(value) {
   return /^[a-fA-F0-9]{64}$/.test(value);
 }
 
+function isValidInviteCode(value) {
+  return /^[A-Za-z0-9_-]{6,128}$/.test(value);
+}
+
+function parseRegisterPolicy(value) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (raw === "admin" || raw === "invite" || raw === "open") return raw;
+  return "open";
+}
+
 function scheduleOneTimeClientBurn(authContext, kv, ctx) {
   if (!kv || !ctx || !authContext || !authContext.principal) return;
   if (authContext.role !== "user") return;
@@ -306,23 +316,36 @@ export default {
     const authDebug = parseBoolean(env.AUTH_DEBUG);
 
     if (path === "/api/register-once" && request.method.toUpperCase() === "POST") {
-      const disableAuth = parseBoolean(env.DISABLE_AUTH);
-      const adminKey = env.SECRET_KEY;
-      const incomingAdminKey = request.headers.get("x-auth-key") || "";
-      if (!disableAuth) {
-        if (!adminKey || incomingAdminKey !== adminKey) {
-          return jsonResponse({ error: "Access Denied" }, 403);
-        }
-      }
       if (!kv) {
         return jsonResponse({ error: "KV not bound" }, 500);
       }
+
+      const registerPolicy = parseRegisterPolicy(env.REGISTER_POLICY);
+      const adminKey = env.SECRET_KEY;
+      const incomingAdminKey = request.headers.get("x-auth-key") || "";
 
       let body;
       try {
         body = await request.json();
       } catch (err) {
         return jsonResponse({ error: "Invalid JSON body" }, 400);
+      }
+
+      if (registerPolicy === "admin") {
+        if (!adminKey || incomingAdminKey !== adminKey) {
+          return jsonResponse({ error: "Access Denied" }, 403);
+        }
+      } else if (registerPolicy === "invite") {
+        const inviteCode = String(body?.invite_code || "").trim();
+        if (!isValidInviteCode(inviteCode)) {
+          return jsonResponse({ error: "Invalid invite_code" }, 400);
+        }
+        const inviteKey = `invite:${inviteCode}`;
+        const inviteRaw = await kv.get(inviteKey);
+        if (!inviteRaw) {
+          return jsonResponse({ error: "Invite not found or used" }, 403);
+        }
+        await kv.delete(inviteKey);
       }
 
       const clientIdRaw = String(body?.client_id || "").trim();
@@ -362,6 +385,7 @@ export default {
       await kv.put(`client:${clientId}`, JSON.stringify(record), { expirationTtl: ttlSec + 120 });
       return jsonResponse({
         ok: true,
+        register_policy: registerPolicy,
         client_id: clientId,
         secret,
         one_time: oneTime,

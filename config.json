@@ -1,44 +1,25 @@
 {
-  "_comment": "CF优选主配置。JSON 不支持注释，使用 *_comment 字段说明。",
   "cloudflare": {
-    "_comment": "Cloudflare DNS 更新配置（用于模式 2）。",
-    "api_token": "KTELwAXIsL1ZKr72KEQ47akSK3_0fQ80cura5ew7",
-    "api_token_comment": "Scoped Token，需包含 DNS:Edit 权限。",
-    "zone_id": "0aac171026a170d5688bb1c7b0327aa4",
-    "zone_id_comment": "域名所在 Zone ID。",
-    "dns_name": "cf.xiaoliu.sbs",
-    "dns_name_comment": "需要自动更新的域名。",
-    "base_url": "https://cloudflareip.ocisg.xyz",
-    "base_url_comment": "Worker 根地址，Cloudflare API 代理走 /cf。"
+    "api_token": "04lOmxzKJ1NSrKZ51EiW9kyJ5HetIOR8VQK3CmBb",
+    "zone_id": "88a3d666ea8f677d672bdbaa4f9f36cc",
+    "dns_name": "cf.ocisg.xyz",
+    "base_url": "https://cloudflareip.ocisg.xyz"
   },
   "telegram": {
-    "_comment": "Telegram 推送配置（当前代码默认未启用推送调用）。",
     "base_url": "https://cloudflareip.ocisg.xyz",
-    "base_url_comment": "Telegram API 代理根地址，走 /tg。",
-    "auth_key": "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk",
-    "auth_key_comment": "Worker 管理员鉴权 key（用于自动注册一次性凭据）。",
+    "auth_key": "",
     "bot_token": "8678954550:AAG-N-j8U0Io4Ln8Z94-1sQvSEZUryqH1I8",
-    "bot_token_comment": "Telegram Bot Token。",
-    "chat_id": "8722639941,6038859511",
-    "chat_id_comment": "多个接收者用英文逗号分隔。"
+    "chat_id": "8722639941,6038859511"
   },
   "settings": {
-    "_comment": "测速与 IP 源配置。",
     "ip_api_url": "https://cloudflareip.ocisg.xyz/api/data",
-    "ip_api_url_comment": "软件官方 IP 源接口。",
     "max_ips": 200,
-    "max_ips_comment": "cfst 延迟测速并发参数（-n）。",
     "top_n": 10,
-    "top_n_comment": "进入下载测速的候选数量（-dn）。",
     "timeout": 15,
-    "timeout_comment": "请求接口超时（秒）。",
     "max_retries": 3,
-    "max_retries_comment": "单轮测速速度为 0 时的重试次数。",
-    "auth_key": "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk",
-    "auth_key_comment": "Worker 管理员鉴权 key（优先用于自动注册一次性凭据）。",
+    "auth_key": "",
     "auto_register_once": true,
-    "auto_register_once_comment": "自动注册一次性签名凭据，用户无感。",
     "auth_ephemeral_ttl_sec": 180,
-    "auth_ephemeral_ttl_sec_comment": "一次性凭据有效期（秒）。"
+    "invite_code": ""
   }
 }

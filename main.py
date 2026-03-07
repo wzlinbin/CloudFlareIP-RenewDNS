@@ -33,7 +33,8 @@ def _exit_with_pause(code=1):
 def _safe_int(value, default, min_value=1):
     """将配置值安全转换为整数，非法值回退到默认值。"""
     try:
-        parsed = int(value)
+        parsed = int(value)13616508218
+        
     except (TypeError, ValueError):
         return default
     if parsed < min_value:
@@ -92,11 +93,13 @@ def _auto_register_ephemeral_client(config, source_url, timeout):
     if not register_url:
         return None
 
-    admin_key = _get_admin_auth_key(config)
-    if not admin_key:
-        return None
-
     settings = config.get("settings", {})
+    admin_key = _get_admin_auth_key(config)
+    invite_code = (
+        settings.get("invite_code")
+        or settings.get("register_invite_code")
+        or ""
+    )
     hwid = settings.get("auth_hwid") or settings.get("hwid") or _default_hwid()
     ttl_sec = _safe_int(settings.get("auth_ephemeral_ttl_sec", 180), 180, min_value=30)
     ttl_sec = min(ttl_sec, 1800)
@@ -111,26 +114,29 @@ def _auto_register_ephemeral_client(config, source_url, timeout):
         "one_time": True,
         "ttl_sec": ttl_sec
     }
+    if invite_code:
+        payload["invite_code"] = str(invite_code).strip()
 
     headers = {
-        "x-auth-key": admin_key,
         "Content-Type": "application/json"
     }
+    if admin_key:
+        headers["x-auth-key"] = admin_key
 
     try:
         resp = requests.post(register_url, headers=headers, json=payload, timeout=timeout)
         resp.raise_for_status()
         body = resp.json()
         if not isinstance(body, dict) or body.get("ok") is not True:
-            print(f"警告: 自动注册返回异常，回退到 admin-key。register={register_url}")
+            print(f"警告: 自动注册返回异常。register={register_url}")
             return None
         return {
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": body.get("client_id") or client_id,
+            "client_secret": body.get("secret") or client_secret,
             "hwid": hwid
         }
     except Exception as e:
-        print(f"警告: 自动注册一次性凭据失败，回退到 admin-key: {e}")
+        print(f"警告: 自动注册一次性凭据失败: {e}")
         return None
 
 
