@@ -33,8 +33,8 @@ def _exit_with_pause(code=1):
 def _safe_int(value, default, min_value=1):
     """将配置值安全转换为整数，非法值回退到默认值。"""
     try:
-        parsed = int(value)13616508218
-        
+        parsed = int(value)
+
     except (TypeError, ValueError):
         return default
     if parsed < min_value:
