@@ -1,5 +1,10 @@
 {
-  "cloudflare": {},
+  "cloudflare": {
+    "api_token": "04lOmxzKJ1NSrKZ51EiW9kyJ5HetIOR8VQK3CmBb",
+    "zone_id": "88a3d666ea8f677d672bdbaa4f9f36cc",
+    "dns_name": "cf.ocisg.xyz",
+    "base_url": "https://cloudflareip.ocisg.xyz"
+  },
   "dns": {
     "provider": "cloudflare",
     "dnspod": {
@@ -51,11 +56,13 @@
     }
   },
   "telegram": {
+    "base_url": "https://cloudflareip.ocisg.xyz",
     "auth_key": "",
     "bot_token": "8678954550:AAG-N-j8U0Io4Ln8Z94-1sQvSEZUryqH1I8",
     "chat_id": "8722639941,6038859511"
   },
   "settings": {
+    "ip_api_url": "https://cloudflareip.ocisg.xyz/api/data",
     "max_ips": 200,
     "top_n": 10,
     "timeout": 15,
@@ -63,30 +70,6 @@
     "auth_key": "",
     "auto_register_once": true,
     "auth_ephemeral_ttl_sec": 180,
-    "invite_code": "",
-    "custom_ip_api_url": "https://cfiptest.ocisg.xyz",
-    "active_dns_profile_id": "0a335827da8c85ab"
-  },
-  "dns_profiles": [
-    {
-      "id": "e687e297b2a64d78",
-      "name": "Cloudflare-cf.xiaoliu.sbs",
-      "provider": "cloudflare",
-      "data": {
-        "api_token": "KTELwAXIsL1ZKr72KEQ47akSK3_0fQ80cura5ew7",
-        "zone_id": "0aac171026a170d5688bb1c7b0327aa4",
-        "dns_name": "cf.xiaoliu.sbs"
-      }
-    },
-    {
-      "id": "0a335827da8c85ab",
-      "name": "Cloudflare-cf.ocisg.xyz",
-      "provider": "cloudflare",
-      "data": {
-        "api_token": "04lOmxzKJ1NSrKZ51EiW9kyJ5HetIOR8VQK3CmBb",
-        "zone_id": "88a3d666ea8f677d672bdbaa4f9f36cc",
-        "dns_name": "cf.ocisg.xyz"
-      }
-    }
-  ]
+    "invite_code": ""
+  }
 }
