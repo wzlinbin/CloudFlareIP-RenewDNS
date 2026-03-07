@@ -41,11 +41,8 @@ def _safe_int(value, default, min_value=1):
     return parsed
 
 
-DEFAULT_IP_SOURCE_URL = "https://cloudflareip.ocisg.xyz/api/data"
-LEGACY_IP_SOURCE_URLS = {
-    "http://tgbot.xiaoliu.sbs/all",
-    "https://tgbot.xiaoliu.sbs/all",
-}
+DEFAULT_WORKER_BASE_URL = "https://cloudflareip.ocisg.xyz"
+DEFAULT_IP_SOURCE_URL = f"{DEFAULT_WORKER_BASE_URL}/api/data"
 
 
 def _default_hwid():
@@ -152,13 +149,9 @@ def _resolve_ip_source_urls(settings):
     if not urls:
         urls = [DEFAULT_IP_SOURCE_URL]
 
-    normalized = []
-    for url in urls:
-        normalized.append(DEFAULT_IP_SOURCE_URL if url in LEGACY_IP_SOURCE_URLS else url)
-
     deduped = []
     seen = set()
-    for url in normalized:
+    for url in urls:
         if url not in seen:
             seen.add(url)
             deduped.append(url)
@@ -238,7 +231,7 @@ def cloudflare_request(config, method, url_suffix="", **kwargs):
         "Content-Type": "application/json"
     }
 
-    base_url = config.get('cloudflare', {}).get('base_url', config.get('telegram', {}).get('base_url', 'https://api.cloudflare.com')).rstrip('/')
+    base_url = config.get('cloudflare', {}).get('base_url', config.get('telegram', {}).get('base_url', DEFAULT_WORKER_BASE_URL)).rstrip('/')
     auth_key = config.get('cloudflare', {}).get('auth_key', config.get('telegram', {}).get('auth_key', ''))
 
     direct_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records{url_suffix}"
@@ -302,7 +295,7 @@ def fetch_ips(config, current_ip=None):
     for source_url in source_urls:
         headers, auth_mode = _build_ip_api_headers(config, source_url, timeout)
         try:
-            print(f"正在从接口获取 IP 数据: {source_url} (auth={auth_mode})")
+            print(f"正在从软件官方接口获取 IP 数据: {source_url} (auth={auth_mode})")
             resp = requests.get(source_url, headers=headers, timeout=timeout)
             resp.raise_for_status()
 
@@ -438,7 +431,7 @@ def push_notification(config, message):
     """将结果通过 Telegram Bot 并发推送给一个或多个用户"""
     token        = config['telegram']['bot_token']
     chat_ids     = [c.strip() for c in str(config['telegram']['chat_id']).split(',') if c.strip()]
-    base_url     = config['telegram'].get('base_url', 'https://api.telegram.org').rstrip('/')
+    base_url     = config['telegram'].get('base_url', DEFAULT_WORKER_BASE_URL).rstrip('/')
     auth_key     = config['telegram'].get('auth_key', '')
     req_headers  = {"x-auth-key": auth_key} if auth_key else {}
     url          = f"{base_url}/tg/bot{token}/sendMessage"
@@ -545,7 +538,8 @@ def main():
         print("无效选择，退出。")
         return
 
-    max_retries = _safe_int(config.get('settings', {}).get('max_retries', 3), 3, min_value=1)
+    settings = config.get('settings', {})
+    max_retries = _safe_int(settings.get('max_retries', 3), 3, min_value=1)
 
     # 2. 网络检测（主线程，翻墙状态下暂停后退出）
     # check_network_environment()  # 暂时关闭网络环境检测
@@ -553,27 +547,31 @@ def main():
     # 3. 获取当前 DNS IP（仅开启 DNS 更新时）
     current_ip = get_current_dns_ip(config) if enable_dns_update else None
 
-    # 4. 测速 + 确认循环（用户按 R 可重新测速，历史结果可随时选用）
-    history   = []   # [(轮次, ip, speed, region), ...]
-    round_num = 0
+    # 4. 多轮测速：每轮保留该轮最优结果作为候选
+    history = []   # [(轮次, ip, speed, region, speed_val), ...]
+    ip_pool_loaded = False
 
+    round_num = 0
     while True:
         round_num += 1
-        if round_num > 1:
-            print(f"\n🔄 第 {round_num} 次测速开始...\n")
+        print(f"\n🔄 第 {round_num} 轮测速开始...")
 
-        # ── 速度为 0 自动重试 ──────────────────────────────────
         best_ip = speed = region = None
+        speed_val = 0.0
+
         for attempt in range(1, max_retries + 1):
             if attempt > 1:
-                print(f"\n⚠️  第 {attempt}/{max_retries} 次重试，重新抓取 IP 并测速...")
+                print(f"⚠️  第 {attempt}/{max_retries} 次重试，重新测速...")
 
-            if not fetch_ips(config, current_ip):
-                print("停止运行：IP 库加载失败。")
-                return
+            if not ip_pool_loaded:
+                if not fetch_ips(config, current_ip):
+                    print("停止运行：IP 库加载失败。")
+                    return
+                ip_pool_loaded = True
+            else:
+                print("复用已缓存的 ip.txt，不重新请求后端 IP 源。")
 
             best_ip, speed, region = run_speed_test(config)
-
             try:
                 speed_val = float(speed) if speed is not None else 0.0
             except (ValueError, TypeError):
@@ -583,80 +581,86 @@ def main():
                 break
 
             if attempt < max_retries:
-                print(f"⚠️  测速结果下载速度为 0，可能是网络抖动，即将自动重试...")
-            else:
-                print(f"❌ 已重试 {max_retries} 次，下载速度仍为 0，请检查网络后手动重新运行。")
-                return
+                print("⚠️  本次测速下载速度为 0，继续重试...")
 
-        if not best_ip:
-            print("未能定位到任何有效的最优 IP。")
-            return
-
-        # ── 本轮结果加入历史 ───────────────────────────────────
-        history.append((round_num, best_ip, speed, region, speed_val))
-
-        if enable_dns_update:
-            sorted_history = sorted(history, key=lambda x: x[4], reverse=True)
-
-            # 显示按速度排序后的历史结果，回车默认使用全历史最快结果
-            while True:
-                print(f"\n{'='*48}")
-                print("  历史测速结果（按速度排序）:")
-                for i, (rnd, h_ip, h_spd, h_reg, _) in enumerate(sorted_history, start=1):
-                    tag = "  <- 默认推荐" if i == 1 else ""
-                    print(f"    [{i}] 第 {rnd} 次  {h_ip} | {h_reg} | {h_spd} MB/s{tag}")
-                print(f"{'='*48}")
-
-                hint = f"回车/Y=使用默认推荐(最快)  1~{len(sorted_history)}=选择历史结果  R=重新测速"
-                print(f"操作：{hint}")
-
-                try:
-                    answer = input("> ").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    answer = 'r'
-
-                if answer in ('y', ''):
-                    _, sel_ip, sel_spd, sel_reg, _ = sorted_history[0]
-                    break
-                elif answer == 'r':
-                    print("\n🔄 正在重新开始测速...\n")
-                    break
-                elif answer.isdigit() and 1 <= int(answer) <= len(sorted_history):
-                    idx = int(answer)
-                    _, sel_ip, sel_spd, sel_reg, _ = sorted_history[idx - 1]
-                    print(f"✅ 已选择第 {idx} 项结果: {sel_ip} | {sel_reg} | {sel_spd} MB/s")
-                    break
-                else:
-                    print("无效输入，请重试。")
-                    continue
-
-            if answer == 'r':
-                continue  # 回到 while True 重新测速
-            update_status = update_cf_dns(config, sel_ip)
-            if update_status is True:
-                msg = (f"✅ <b>CF 优选 IP 更新成功</b>\n"
-                       f"域名: <code>{config['cloudflare']['dns_name']}</code>\n"
-                       f"解析 IP: <b>{sel_ip}</b>\n"
-                       f"地区码: <b>{sel_reg}</b>\n"
-                       f"实测速度: <b>{sel_spd} MB/s</b>")
-                # push_notification(config, msg)  # 临时注释推送功能
-            elif update_status == "NO_CHANGE":
-                print("状态: 当前 IP 已是最优，无需更新。")
-            else:
-                msg = (f"❌ <b>CF 优选 IP 更新失败</b>\n"
-                       f"最优 IP: {sel_ip}\n"
-                       f"原因: API 调用报错，请检查日志或令牌权限。")
-                # push_notification(config, msg)  # 临时注释推送功能
-            break  # 更新完成，退出大循环
+        if best_ip and speed_val > 0:
+            history.append((round_num, best_ip, speed, region, speed_val))
+            print(f"✅ 第 {round_num} 轮最优: {best_ip} | {region} | {speed} MB/s（已加入候选）")
         else:
-            print("状态: DNS 自动更新已禁用，仅推送优选结果。")
-            msg = (f"💡 <b>CF 优选 IP 测速完成</b>\n"
-                   f"最优 IP: <b>{best_ip}</b>\n"
-                   f"地区码: <b>{region}</b>\n"
-                   f"实测速度: <b>{speed} MB/s</b>\n"
-                   f"<i>(提示：由于禁用了自动更新域名，请手动修改您的优选信息。)</i>")
+            print(f"❌ 第 {round_num} 轮未得到有效结果，跳过该轮。")
+        
+        if history:
+            sorted_history = sorted(history, key=lambda x: x[4], reverse=True)
+            print(f"\n{'='*56}")
+            print("当前候选池（每轮最优，按速度排序）:")
+            for i, (rnd, h_ip, h_spd, h_reg, _) in enumerate(sorted_history, start=1):
+                tag = "  <- 当前推荐" if i == 1 else ""
+                print(f"  [{i}] 第 {rnd} 轮  {h_ip} | {h_reg} | {h_spd} MB/s{tag}")
+            print(f"{'='*56}")
+            print("操作：R=继续下一轮测速  回车/Y=结束测速并进入候选选择")
+            try:
+                next_action = input("> ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                next_action = ''
+            if next_action == 'r':
+                continue
+            break
+
+        print("当前暂无有效候选。操作：R=继续重测  其他键=结束")
+        try:
+            next_action = input("> ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            next_action = ''
+        if next_action == 'r':
+            continue
+        print("未产生可用候选，程序结束。")
+        return
+
+    sorted_history = sorted(history, key=lambda x: x[4], reverse=True)
+
+    if enable_dns_update:
+        while True:
+            hint = f"回车/Y=使用默认推荐(最快)  1~{len(sorted_history)}=选择候选"
+            print(f"操作：{hint}")
+            try:
+                answer = input("> ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = ''
+
+            if answer in ('y', ''):
+                _, sel_ip, sel_spd, sel_reg, _ = sorted_history[0]
+                break
+            if answer.isdigit() and 1 <= int(answer) <= len(sorted_history):
+                idx = int(answer)
+                _, sel_ip, sel_spd, sel_reg, _ = sorted_history[idx - 1]
+                print(f"✅ 已选择第 {idx} 项候选: {sel_ip} | {sel_reg} | {sel_spd} MB/s")
+                break
+            print("无效输入，请重试。")
+
+        update_status = update_cf_dns(config, sel_ip)
+        if update_status is True:
+            msg = (f"✅ <b>CF 优选 IP 更新成功</b>\n"
+                   f"域名: <code>{config['cloudflare']['dns_name']}</code>\n"
+                   f"解析 IP: <b>{sel_ip}</b>\n"
+                   f"地区码: <b>{sel_reg}</b>\n"
+                   f"实测速度: <b>{sel_spd} MB/s</b>")
             # push_notification(config, msg)  # 临时注释推送功能
-            break  # 无需确认，直接结束
+        elif update_status == "NO_CHANGE":
+            print("状态: 当前 IP 已是最优，无需更新。")
+        else:
+            msg = (f"❌ <b>CF 优选 IP 更新失败</b>\n"
+                   f"最优 IP: {sel_ip}\n"
+                   f"原因: API 调用报错，请检查日志或令牌权限。")
+            # push_notification(config, msg)  # 临时注释推送功能
+    else:
+        _, best_ip, best_spd, best_reg, _ = sorted_history[0]
+        print("状态: DNS 自动更新已禁用，仅输出多轮候选与推荐结果。")
+        msg = (f"💡 <b>CF 优选 IP 测速完成</b>\n"
+               f"推荐 IP: <b>{best_ip}</b>\n"
+               f"地区码: <b>{best_reg}</b>\n"
+               f"实测速度: <b>{best_spd} MB/s</b>\n"
+               f"<i>(已完成多轮测速，每轮最优均已作为候选)</i>")
+        # push_notification(config, msg)  # 临时注释推送功能
 
     _exit_with_pause(0)
 

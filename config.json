@@ -1,42 +1,44 @@
-﻿{
-    "cloudflare":  {
-                       "api_token":  "KTELwAXIsL1ZKr72KEQ47akSK3_0fQ80cura5ew7",
-                       "//_api_token":  "Cloudflare 的 Scoped Token，需具备 DNS:Edit 权限",
-                       "zone_id":  "0aac171026a170d5688bb1c7b0327aa4",
-                       "//_zone_id":  "域名所在的区域 ID (Zone ID)",
-                       "dns_name":  "cf.xiaoliu.sbs",
-                       "//_dns_name":  "需要自动更新的域名"
-                   },
-    "telegram":  {
-                     "base_url":  "https://tgbot.xiaoliu.sbs",
-                     "//_base_url":  "Telegram Bot API 的 Base URL，如使用自建代理可修改此项",
-                     "auth_key":  "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk",
-                     "//_auth_key":  "CF Worker 的鉴权密钥，对应 Worker 中的 x-auth-key Header",
-                     "bot_token":  "8678954550:AAG-N-j8U0Io4Ln8Z94-1sQvSEZUryqH1I8",
-                     "//_bot_token":  "Telegram Bot 的 Token",
-                     "chat_id":  "8722639941,6038859511",
-                     "//_chat_id":  "接收通知的 Telegram 用户或群组 ID，多个请用逗号分隔"
-                 },
-    "settings":  {
-                     "ip_sources":  [
-                                        "https://cloudflareip.ocisg.xyz/api/data"
-                                    ],
-                     "//_ip_sources":  "IP 来源网站列表，已通过 CF Worker 代理访问",
-                     "max_ips":  200,
-                     "//_max_ips":  "cfst 延迟测速的并发线程数（不是测试的 IP 数量，所有从 ip.txt 读入的 IP 都会被测试）",
-                     "top_n":  10,
-                     "//_top_n":  "延迟排名后，选取前几名参与下载测速（越大结果越准确但越慢，10 是性价比最高的值）",
-                     "timeout":  15,
-                     "//_timeout":  "网络请求超时时间 (秒)",
-                     "enable_dns_update":  true,
-                     "//_enable_dns_update":  "是否自动更新 Cloudflare 域名解析",
-                     "max_retries":  3,
-                     "//_max_retries":  "测速结果下载速度为 0 时自动重试的最大次数",
-                     "ip_api_url":  "https://cloudflareip.ocisg.xyz/api/data",
-                     "auth_key":  "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk",
-                     "auto_register_once":  true,
-                     "//_auto_register_once":  "是否自动注册一次性签名凭据（无感鉴权）",
-                     "auth_ephemeral_ttl_sec":  180,
-                     "//_auth_ephemeral_ttl_sec":  "一次性凭据有效期（秒）"
-                 }
+{
+  "_comment": "CF优选主配置。JSON 不支持注释，使用 *_comment 字段说明。",
+  "cloudflare": {
+    "_comment": "Cloudflare DNS 更新配置（用于模式 2）。",
+    "api_token": "KTELwAXIsL1ZKr72KEQ47akSK3_0fQ80cura5ew7",
+    "api_token_comment": "Scoped Token，需包含 DNS:Edit 权限。",
+    "zone_id": "0aac171026a170d5688bb1c7b0327aa4",
+    "zone_id_comment": "域名所在 Zone ID。",
+    "dns_name": "cf.xiaoliu.sbs",
+    "dns_name_comment": "需要自动更新的域名。",
+    "base_url": "https://cloudflareip.ocisg.xyz",
+    "base_url_comment": "Worker 根地址，Cloudflare API 代理走 /cf。"
+  },
+  "telegram": {
+    "_comment": "Telegram 推送配置（当前代码默认未启用推送调用）。",
+    "base_url": "https://cloudflareip.ocisg.xyz",
+    "base_url_comment": "Telegram API 代理根地址，走 /tg。",
+    "auth_key": "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk",
+    "auth_key_comment": "Worker 管理员鉴权 key（用于自动注册一次性凭据）。",
+    "bot_token": "8678954550:AAG-N-j8U0Io4Ln8Z94-1sQvSEZUryqH1I8",
+    "bot_token_comment": "Telegram Bot Token。",
+    "chat_id": "8722639941,6038859511",
+    "chat_id_comment": "多个接收者用英文逗号分隔。"
+  },
+  "settings": {
+    "_comment": "测速与 IP 源配置。",
+    "ip_api_url": "https://cloudflareip.ocisg.xyz/api/data",
+    "ip_api_url_comment": "软件官方 IP 源接口。",
+    "max_ips": 200,
+    "max_ips_comment": "cfst 延迟测速并发参数（-n）。",
+    "top_n": 10,
+    "top_n_comment": "进入下载测速的候选数量（-dn）。",
+    "timeout": 15,
+    "timeout_comment": "请求接口超时（秒）。",
+    "max_retries": 3,
+    "max_retries_comment": "单轮测速速度为 0 时的重试次数。",
+    "auth_key": "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk",
+    "auth_key_comment": "Worker 管理员鉴权 key（优先用于自动注册一次性凭据）。",
+    "auto_register_once": true,
+    "auto_register_once_comment": "自动注册一次性签名凭据，用户无感。",
+    "auth_ephemeral_ttl_sec": 180,
+    "auth_ephemeral_ttl_sec_comment": "一次性凭据有效期（秒）。"
+  }
 }
