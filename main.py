@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import time
 import secrets
+import webbrowser
 import platform
 import uuid
 import base64
@@ -26,6 +27,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 def _exit_with_pause(code=1):
     """报错退出前暂停，防止窗口一闪而过"""
+    if code == 0:
+        _show_tks_page_content()
     print("\n按回车键退出...")
     try:
         input()
@@ -46,9 +49,65 @@ def _safe_int(value, default, min_value=1):
     return parsed
 
 
+def _brief_request_error(exc):
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "请求超时"
+    if isinstance(exc, requests.exceptions.SSLError):
+        return "SSL连接失败"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return "网络连接失败"
+    if isinstance(exc, requests.exceptions.HTTPError):
+        resp = getattr(exc, "response", None)
+        if resp is not None and getattr(resp, "status_code", None):
+            return f"HTTP {resp.status_code}"
+        return "HTTP错误"
+    return "请求失败"
+
+
 DEFAULT_WORKER_BASE_URL = "https://cloudflareip.ocisg.xyz"
 DEFAULT_IP_SOURCE_URL = f"{DEFAULT_WORKER_BASE_URL}/api/data"
+TKS_PAGE_URL = f"{DEFAULT_WORKER_BASE_URL}/tks"
 
+
+def _strip_html_tags(value):
+    text = re.sub(r"(?is)<[^>]+>", " ", str(value or ""))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _fetch_tks_sponsor_text():
+    try:
+        resp = requests.get(TKS_PAGE_URL, timeout=10)
+        resp.raise_for_status()
+        html = (resp.text or "").strip()
+        if not html:
+            return ""
+    except Exception:
+        return ""
+
+    compact_html = re.sub(r"\s+", " ", html)
+    m = re.search(r"项目赞助人员[：:]\s*(.*?)</p>", compact_html, flags=re.IGNORECASE)
+    if m:
+        return _strip_html_tags(m.group(1))
+
+    plain = _strip_html_tags(compact_html)
+    m = re.search(r"项目赞助人员[：:]\s*([^。；;\n\r]+)", plain)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
+def _show_tks_page_content():
+    sponsor_text = _fetch_tks_sponsor_text()
+    print("\n========致谢========")
+    print("感谢https://github.com/XIU2/CloudflareSpeedTest 项目，提供了测速模块能力。")
+    print("本项目GitHub地址：https://github.com/wzlinbin/CloudFlareIP-RenewDNS")
+    print("如果这个软件对你有帮助，麻烦给个🌟，也可以点击下面链接请作者喝杯咖啡，并将您的赞助列入项目支持人员列表")
+    if sponsor_text:
+        print(f"本项目赞助人员感谢人员：{sponsor_text}")
+    else:
+        print("本项目赞助人员感谢人员：获取失败，请访问 https://cloudflareip.ocisg.xyz/tks 查看")
+    print("========================")
+   
 
 def _get_url_origin(url):
     if not isinstance(url, str):
@@ -1190,7 +1249,7 @@ def fetch_ips(config, current_ip=None):
             success_count += 1
             print(f"接口返回 {len(api_ips)} 条 IPv4，当前去重后共 {len(all_ips)} 条待测速。")
         except Exception as e:
-            print(f"错误: 从 {source_url} 获取 IP 失败: {e}")
+            print(f"错误: IP源获取失败（{_brief_request_error(e)}）。")
 
     if success_count == 0:
         if os.path.exists('ip.txt') and os.path.getsize('ip.txt') > 0:
