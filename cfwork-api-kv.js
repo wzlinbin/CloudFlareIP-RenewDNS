@@ -1,172 +1,479 @@
-/**
- * 聚合代理 SaaS 终极版（已修复变量命名语法错误）
- * 修复点：将 env.KV-name 统一修改为 env.KV
- */
+const ENCODER = new TextEncoder();
+
+const SOURCES = {
+  wetest: "https://www.wetest.vip/page/cloudflare/address_v4.html",
+  uouin: "https://api.uouin.com/cloudflare.html",
+  v2too: "https://ip.v2too.top",
+  xyz: "https://ip.164746.xyz",
+  vps789: "https://vps789.com/public/sum/cfIpApi",
+  vvhan: "https://api.4ce.cn/api/bestCFIP",
+  mrxn: "https://raw.githubusercontent.com/xingpingcn/enhanced-FaaS-in-China/refs/heads/main/Vercel.json"
+};
+
+const DATA_CACHE_KEY = "system_aggregated_data_v5";
+const CACHE_TTL = 3600;
+const STATS_SAMPLE_RATE = 0.05;
+
+function parseBoolean(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  return text === "true" || text === "1" || text === "on" || text === "yes";
+}
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function toHex(buffer) {
+  return Array.from(new Uint8Array(buffer))
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function hmacSha256Hex(secret, data) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    ENCODER.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, ENCODER.encode(data));
+  return toHex(sig);
+}
+
+async function sha256Hex(data) {
+  const digest = await crypto.subtle.digest("SHA-256", ENCODER.encode(data));
+  return toHex(digest);
+}
+
+function sortIPv4(ips) {
+  return ips.sort((a, b) => {
+    const aa = a.split(".").map((n) => Number.parseInt(n, 10));
+    const bb = b.split(".").map((n) => Number.parseInt(n, 10));
+    for (let i = 0; i < 4; i += 1) {
+      if (aa[i] !== bb[i]) return aa[i] - bb[i];
+    }
+    return 0;
+  });
+}
+
+function extractIPv4(rawText) {
+  const ipRegex = /\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?\d\d?)\b/g;
+  const found = rawText.match(ipRegex) || [];
+  const set = new Set();
+  for (const ipAddr of found) {
+    if (ipAddr === "0.0.0.0" || ipAddr === "127.0.0.1") continue;
+    set.add(ipAddr);
+  }
+  return sortIPv4([...set]);
+}
+
+function getClientIp(request) {
+  const cf = request.headers.get("CF-Connecting-IP");
+  if (cf) return cf.trim();
+  const xff = request.headers.get("x-forwarded-for");
+  if (!xff) return "";
+  return xff.split(",")[0].trim();
+}
+
+function jsonResponse(body, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json",
+      ...extraHeaders
+    }
+  });
+}
+
+function isValidClientId(value) {
+  return /^[A-Za-z0-9._:@-]{3,128}$/.test(value);
+}
+
+function isValidHwid(value) {
+  return /^[A-Za-z0-9._:-]{8,128}$/.test(value);
+}
+
+function isValidNonce(value) {
+  return /^[A-Za-z0-9_-]{8,128}$/.test(value);
+}
+
+function isValidToken(value) {
+  return /^[a-fA-F0-9]{64}$/.test(value);
+}
+
+function scheduleOneTimeClientBurn(authContext, kv, ctx) {
+  if (!kv || !ctx || !authContext || !authContext.principal) return;
+  if (authContext.role !== "user") return;
+  if (authContext.principal.one_time !== true) return;
+  if (!authContext.principal.kvKey) return;
+  ctx.waitUntil(kv.delete(authContext.principal.kvKey));
+}
+
+async function authorizeRequest(request, env, path) {
+  const kv = env.KV;
+  const disableAuth = parseBoolean(env.DISABLE_AUTH);
+  if (disableAuth) {
+    return {
+      authorized: true,
+      role: "bypass",
+      hwid: request.headers.get("x-hwid") || "",
+      clientId: "bypass",
+      authMode: "bypass",
+      principal: null
+    };
+  }
+
+  const adminKey = env.SECRET_KEY;
+  const legacyKey = request.headers.get("x-auth-key") || "";
+  if (adminKey && legacyKey && legacyKey === adminKey) {
+    return {
+      authorized: true,
+      role: "admin",
+      hwid: request.headers.get("x-hwid") || "",
+      clientId: "admin",
+      authMode: "admin-key",
+      principal: null
+    };
+  }
+
+  if (!kv) {
+    return { authorized: false, reason: "kv_not_bound" };
+  }
+
+  const clientId = request.headers.get("x-client-id") || "";
+  const hwid = request.headers.get("x-hwid") || "";
+  const tsRaw = request.headers.get("x-ts") || "";
+  const nonce = request.headers.get("x-nonce") || "";
+  const token = request.headers.get("x-token") || "";
+
+  if (!clientId || !hwid || !tsRaw || !nonce || !token) {
+    return { authorized: false, reason: "missing_signed_headers" };
+  }
+  if (!isValidClientId(clientId)) {
+    return { authorized: false, reason: "bad_client_id" };
+  }
+  if (!isValidHwid(hwid)) {
+    return { authorized: false, reason: "bad_hwid" };
+  }
+  if (!isValidNonce(nonce)) {
+    return { authorized: false, reason: "bad_nonce" };
+  }
+  if (!isValidToken(token)) {
+    return { authorized: false, reason: "bad_token_shape" };
+  }
+
+  const ts = Number.parseInt(tsRaw, 10);
+  if (!Number.isFinite(ts)) {
+    return { authorized: false, reason: "bad_timestamp" };
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const authWindowSec = Math.max(10, Math.min(600, parsePositiveInt(env.AUTH_WINDOW_SEC, 90)));
+  if (Math.abs(nowSec - ts) > authWindowSec) {
+    return { authorized: false, reason: "timestamp_expired" };
+  }
+
+  const clientKvKey = `client:${clientId}`;
+  const clientJson = await kv.get(clientKvKey);
+  if (!clientJson) {
+    return { authorized: false, reason: "client_not_found" };
+  }
+
+  let clientData;
+  try {
+    clientData = JSON.parse(clientJson);
+  } catch (err) {
+    return { authorized: false, reason: "client_json_invalid" };
+  }
+
+  if (clientData && clientData.disabled === true) {
+    return { authorized: false, reason: "client_disabled" };
+  }
+
+  if (clientData && typeof clientData.expires_at === "string") {
+    const exp = Date.parse(clientData.expires_at);
+    if (!Number.isNaN(exp) && Date.now() > exp) {
+      return { authorized: false, reason: "client_expired" };
+    }
+  }
+
+  const clientSecret = clientData?.secret || clientData?.token_secret;
+  if (!clientSecret || typeof clientSecret !== "string") {
+    return { authorized: false, reason: "client_secret_missing" };
+  }
+
+  const boundHwid = clientData?.hwid || clientData?.bound_hwid;
+  if (boundHwid && boundHwid !== hwid) {
+    return { authorized: false, reason: "hwid_mismatch" };
+  }
+
+  const canonical = `${request.method.toUpperCase()}\n${path}\n${ts}\n${nonce}\n${hwid}`;
+  const expectedToken = await hmacSha256Hex(clientSecret, canonical);
+  if (expectedToken !== token.toLowerCase()) {
+    return { authorized: false, reason: "token_invalid" };
+  }
+
+  const nonceKey = `auth:nonce:${clientId}:${ts}:${nonce}`;
+  const tokenHash = await sha256Hex(token.toLowerCase());
+  const burnKey = `auth:burn:${clientId}:${tokenHash}`;
+  const [nonceUsed, tokenUsed] = await Promise.all([kv.get(nonceKey), kv.get(burnKey)]);
+  if (nonceUsed || tokenUsed) {
+    return { authorized: false, reason: "token_replayed" };
+  }
+
+  const replayTtl = authWindowSec + 60;
+  await Promise.all([
+    kv.put(nonceKey, nowSec.toString(), { expirationTtl: replayTtl }),
+    kv.put(burnKey, nowSec.toString(), { expirationTtl: replayTtl })
+  ]);
+
+  return {
+    authorized: true,
+    role: clientData?.role || "user",
+    hwid,
+    clientId,
+    authMode: "signed-v1",
+    principal: {
+      ...clientData,
+      kvKey: clientKvKey
+    }
+  };
+}
+
+async function fetchAggregatedData() {
+  const results = {};
+  await Promise.all(
+    Object.entries(SOURCES).map(async ([key, srcUrl]) => {
+      const startedAt = Date.now();
+      try {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(srcUrl, { signal: controller.signal });
+        clearTimeout(id);
+        const text = (await res.text()).trim();
+        const ips = extractIPv4(text);
+        results[key] = {
+          status: "ok",
+          source: srcUrl,
+          fetch_ms: Date.now() - startedAt,
+          ip_count: ips.length,
+          ips
+        };
+      } catch (err) {
+        results[key] = {
+          status: "error",
+          source: srcUrl,
+          fetch_ms: Date.now() - startedAt,
+          error: "fetch"
+        };
+      }
+    })
+  );
+
+  const okSources = Object.values(results).filter((item) => item.status === "ok");
+  const failedSources = Object.values(results).filter((item) => item.status !== "ok");
+  const globalSet = new Set(okSources.flatMap((item) => item.ips || []));
+  const globalUniqueIps = sortIPv4([...globalSet]);
+
+  return JSON.stringify(
+    {
+      timestamp: new Date().toISOString(),
+      meta: {
+        cache_key: DATA_CACHE_KEY,
+        sources_total: Object.keys(SOURCES).length,
+        sources_ok: okSources.length,
+        sources_failed: failedSources.length,
+        global_unique_ip_count: globalUniqueIps.length
+      },
+      global: {
+        unique_ips: globalUniqueIps
+      },
+      data: results
+    },
+    null,
+    2
+  );
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    const kv = env.KV;
+    const authDebug = parseBoolean(env.AUTH_DEBUG);
 
-    // ================= 配置区域 =================
-    const ADMIN_KEY = env.SECRET_KEY;
-    // 设为 true/1/on/yes 时，受保护路由全部跳过认证
-    const DISABLE_AUTH_VALUE = String(env.DISABLE_AUTH ?? "").trim().toLowerCase();
-    const DISABLE_AUTH =
-      DISABLE_AUTH_VALUE === "true" ||
-      DISABLE_AUTH_VALUE === "1" ||
-      DISABLE_AUTH_VALUE === "on" ||
-      DISABLE_AUTH_VALUE === "yes";
-    const DATA_CACHE_KEY = "system_aggregated_data_v1";
-    const CACHE_TTL = 3600;
-    const STATS_SAMPLE_RATE = 0.05;
+    if (path === "/api/register-once" && request.method.toUpperCase() === "POST") {
+      const disableAuth = parseBoolean(env.DISABLE_AUTH);
+      const adminKey = env.SECRET_KEY;
+      const incomingAdminKey = request.headers.get("x-auth-key") || "";
+      if (!disableAuth) {
+        if (!adminKey || incomingAdminKey !== adminKey) {
+          return jsonResponse({ error: "Access Denied" }, 403);
+        }
+      }
+      if (!kv) {
+        return jsonResponse({ error: "KV not bound" }, 500);
+      }
 
-    // 注意：请确保 Cloudflare 控制台绑定的 KV 变量名就是 KV
-    const MY_KV = env.KV;
+      let body;
+      try {
+        body = await request.json();
+      } catch (err) {
+        return jsonResponse({ error: "Invalid JSON body" }, 400);
+      }
 
-    const SOURCES = {
-      "wetest": "https://www.wetest.vip/page/cloudflare/address_v4.html",
-      "uouin": "https://api.uouin.com/cloudflare.html",
-      "v2too": "https://ip.v2too.top",
-      "xyz": "https://ip.164746.xyz",
-      "vps789": "https://vps789.com/public/sum/cfIpApi",
-      "vvhan": "https://api.4ce.cn/api/bestCFIP",
-      "mrxn": "https://raw.githubusercontent.com/xingpingcn/enhanced-FaaS-in-China/refs/heads/main/Vercel.json"
+      const clientIdRaw = String(body?.client_id || "").trim();
+      const secretRaw = String(body?.secret || "").trim();
+      const hwidRaw = String(body?.hwid || "").trim();
+      const role = String(body?.role || "user").trim() || "user";
+      const oneTime = body?.one_time !== false;
+      const ttlSec = Math.max(30, Math.min(1800, parsePositiveInt(body?.ttl_sec, 180)));
+
+      const generatedClientId = `auto-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const generatedSecret = toHex(crypto.getRandomValues(new Uint8Array(32)));
+      const clientId = clientIdRaw || generatedClientId;
+      const secret = secretRaw || generatedSecret;
+      const hwid = hwidRaw;
+
+      if (!isValidClientId(clientId)) {
+        return jsonResponse({ error: "Invalid client_id" }, 400);
+      }
+      if (typeof secret !== "string" || secret.length < 32 || secret.length > 256) {
+        return jsonResponse({ error: "Invalid secret length" }, 400);
+      }
+      if (!isValidHwid(hwid)) {
+        return jsonResponse({ error: "Invalid hwid" }, 400);
+      }
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + ttlSec * 1000).toISOString();
+      const record = {
+        secret,
+        hwid,
+        role,
+        one_time: oneTime,
+        created_at: now.toISOString(),
+        expires_at: expiresAt
+      };
+
+      await kv.put(`client:${clientId}`, JSON.stringify(record), { expirationTtl: ttlSec + 120 });
+      return jsonResponse({
+        ok: true,
+        client_id: clientId,
+        secret,
+        one_time: oneTime,
+        expires_at: expiresAt
+      });
+    }
+
+    const isProtectedRoute = path === "/" || path === "/api/data" || path.startsWith("/tg") || path.startsWith("/cf");
+    let authContext = {
+      authorized: true,
+      role: "public",
+      hwid: "",
+      clientId: "public",
+      authMode: "none",
+      principal: null
     };
 
-    const clientKey = request.headers.get("x-auth-key") || url.searchParams.get("key");
-    const isProtectedRoute = path === "/" || path === "/api/data" || path.startsWith("/tg") || path.startsWith("/cf");
-
-    // 全局认证入口：DISABLE_AUTH 控制所有受保护路由
-    let isAuthorized = DISABLE_AUTH;
-    let userRole = DISABLE_AUTH ? "bypass" : "guest";
-    let currentUserData = null;
-
-    if (!DISABLE_AUTH) {
-      if (ADMIN_KEY && clientKey === ADMIN_KEY) {
-        isAuthorized = true;
-        userRole = "admin";
-      } else if (clientKey && MY_KV) {
-        const userJson = await MY_KV.get(clientKey);
-        if (userJson) {
-          isAuthorized = true;
-          userRole = "user";
-          try {
-            currentUserData = JSON.parse(userJson);
-          } catch (e) {}
+    if (isProtectedRoute) {
+      authContext = await authorizeRequest(request, env, path);
+      if (!authContext.authorized) {
+        const body = { error: "Access Denied" };
+        if (authDebug && authContext.reason) {
+          body.reason = authContext.reason;
         }
+        return jsonResponse(body, 403);
       }
     }
 
-    if (isProtectedRoute && !isAuthorized) {
-      return new Response(JSON.stringify({ error: "Access Denied" }), {
-        status: 403,
-        headers: { "content-type": "application/json" }
-      });
-    }
-
-    // 首页：仅返回状态信息
     if (path === "/") {
-      const status = {
-        kv_bound: !!MY_KV,
-        cache_ttl: CACHE_TTL,
-        sources: Object.keys(SOURCES)
-      };
-      return new Response(JSON.stringify(status, null, 2), {
-        headers: { "content-type": "application/json" }
-      });
+      return jsonResponse(
+        {
+          kv_bound: !!kv,
+          cache_ttl: CACHE_TTL,
+          auth_mode: authContext.authMode,
+          auth_window_sec: Math.max(10, Math.min(600, parsePositiveInt(env.AUTH_WINDOW_SEC, 90))),
+          sources: Object.keys(SOURCES)
+        },
+        200
+      );
     }
 
-    // 数据接口：/api/data
     if (path === "/api/data") {
-      const hwid = request.headers.get("x-hwid") || url.searchParams.get("hwid");
-      const ip = request.headers.get("CF-Connecting-IP") || request.headers.get("x-forwarded-for");
+      const hwid = authContext.hwid || request.headers.get("x-hwid") || "";
+      const ip = getClientIp(request);
 
-      // 普通用户：IP + HWID 双重限频（每分钟一次）
-      if (userRole === "user") {
+      if (authContext.role === "user") {
         if (!ip || !hwid) {
-          return new Response(JSON.stringify({ error: "Missing ip or hwid" }), {
-            status: 400,
-            headers: { "content-type": "application/json" }
-          });
+          return jsonResponse({ error: "Missing ip or hwid" }, 400);
         }
 
-        const rateKey = `rate_${ip}_${hwid}`;
-        const last = await MY_KV.get(rateKey);
+        const rateKey = `rate:${authContext.clientId}:${ip}:${hwid}`;
+        const last = await kv.get(rateKey);
         const now = Date.now();
-
         if (last) {
-          const diff = now - parseInt(last, 10);
+          const diff = now - Number.parseInt(last, 10);
           if (diff < 60000) {
-            return new Response(JSON.stringify({ error: "Too Many Requests" }), {
-              status: 429,
-              headers: { "content-type": "application/json" }
-            });
+            return jsonResponse({ error: "Too Many Requests" }, 429);
           }
         }
-
-        ctx.waitUntil(MY_KV.put(rateKey, now.toString(), { expirationTtl: 120 }));
+        ctx.waitUntil(kv.put(rateKey, now.toString(), { expirationTtl: 120 }));
       }
 
-      // 抽样统计
-      if (userRole === "user" && currentUserData && MY_KV && Math.random() < STATS_SAMPLE_RATE) {
-        currentUserData.usage = (currentUserData.usage || 0) + (1 / STATS_SAMPLE_RATE);
-        currentUserData.last_active = new Date().toISOString();
-        ctx.waitUntil(MY_KV.put(clientKey, JSON.stringify(currentUserData)));
+      if (
+        authContext.role === "user" &&
+        authContext.principal &&
+        authContext.principal.one_time !== true &&
+        kv &&
+        Math.random() < STATS_SAMPLE_RATE
+      ) {
+        const updated = { ...authContext.principal };
+        updated.usage = (updated.usage || 0) + (1 / STATS_SAMPLE_RATE);
+        updated.last_active = new Date().toISOString();
+        updated.last_ip = ip;
+        updated.last_hwid = hwid;
+        ctx.waitUntil(kv.put(updated.kvKey, JSON.stringify(updated)));
       }
 
-      // 一次性 token
-      if (userRole === "user" && clientKey) {
-        ctx.waitUntil(MY_KV.delete(clientKey));
-      }
-
-      // 读取缓存
-      if (MY_KV) {
-        const cachedData = await MY_KV.get(DATA_CACHE_KEY);
+      if (kv) {
+        const cachedData = await kv.get(DATA_CACHE_KEY);
         if (cachedData) {
+          scheduleOneTimeClientBurn(authContext, kv, ctx);
           return new Response(cachedData, {
             headers: {
               "content-type": "application/json",
               "Access-Control-Allow-Origin": "*",
               "X-Cache": "HIT",
-              "X-Role": userRole,
+              "X-Role": authContext.role,
+              "X-Auth-Mode": authContext.authMode,
               "Cache-Control": "public, max-age=3600"
             }
           });
         }
       }
 
-      // 聚合原始文本（不再做 IPv4 提取和运营商分类）
-      const results = {};
-      await Promise.all(
-        Object.entries(SOURCES).map(async ([key, srcUrl]) => {
-          try {
-            const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 5000);
-            const res = await fetch(srcUrl, { signal: controller.signal });
-            clearTimeout(id);
-            const text = (await res.text()).trim();
-            results[key] = { text };
-          } catch (e) {
-            results[key] = { error: "fetch" };
-          }
-        })
-      );
-
-      const responseBody = JSON.stringify({ timestamp: new Date(), data: results }, null, 2);
-      if (MY_KV) ctx.waitUntil(MY_KV.put(DATA_CACHE_KEY, responseBody, { expirationTtl: CACHE_TTL }));
+      const responseBody = await fetchAggregatedData();
+      if (kv) {
+        ctx.waitUntil(kv.put(DATA_CACHE_KEY, responseBody, { expirationTtl: CACHE_TTL }));
+      }
+      scheduleOneTimeClientBurn(authContext, kv, ctx);
 
       return new Response(responseBody, {
         headers: {
           "content-type": "application/json",
           "Access-Control-Allow-Origin": "*",
           "X-Cache": "MISS",
-          "X-Role": userRole,
+          "X-Role": authContext.role,
+          "X-Auth-Mode": authContext.authMode,
           "Cache-Control": "public, max-age=3600"
         }
       });
     }
 
-    // Telegram Proxy
     if (path.startsWith("/tg")) {
       const newPath = path.slice(3);
       const targetUrl = `https://api.telegram.org${newPath}${url.search}`;
@@ -180,12 +487,11 @@ export default {
           status: res.status,
           headers: { "Access-Control-Allow-Origin": "*" }
         });
-      } catch (e) {
-        return new Response(e.message, { status: 500 });
+      } catch (err) {
+        return new Response(err.message, { status: 500 });
       }
     }
 
-    // Cloudflare Proxy
     if (path.startsWith("/cf")) {
       const newPath = path.slice(3);
       const targetUrl = `https://api.cloudflare.com${newPath}${url.search}`;
@@ -199,8 +505,8 @@ export default {
           status: res.status,
           headers: { "Access-Control-Allow-Origin": "*" }
         });
-      } catch (e) {
-        return new Response(e.message, { status: 500 });
+      } catch (err) {
+        return new Response(err.message, { status: 500 });
       }
     }
 

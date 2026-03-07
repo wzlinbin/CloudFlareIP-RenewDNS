@@ -33,6 +33,10 @@
                      "max_retries":  3,
                      "//_max_retries":  "测速结果下载速度为 0 时自动重试的最大次数",
                      "ip_api_url":  "https://cloudflareip.ocisg.xyz/api/data",
-                     "auth_key":  "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk"
+                     "auth_key":  "oieGutOR5QgV7Xx2d7N47ajbZFRsTwuk",
+                     "auto_register_once":  true,
+                     "//_auto_register_once":  "是否自动注册一次性签名凭据（无感鉴权）",
+                     "auth_ephemeral_ttl_sec":  180,
+                     "//_auth_ephemeral_ttl_sec":  "一次性凭据有效期（秒）"
                  }
 }

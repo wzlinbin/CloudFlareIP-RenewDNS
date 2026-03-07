@@ -78,6 +78,65 @@ def _build_signed_worker_headers(url, method, client_id, client_secret, hwid):
     }
 
 
+def _resolve_register_once_url(source_url):
+    parsed = urlparse(source_url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}/api/register-once"
+
+
+def _get_admin_auth_key(config):
+    settings = config.get("settings", {})
+    return settings.get("auth_key") or config.get("telegram", {}).get("auth_key", "")
+
+
+def _auto_register_ephemeral_client(config, source_url, timeout):
+    register_url = _resolve_register_once_url(source_url)
+    if not register_url:
+        return None
+
+    admin_key = _get_admin_auth_key(config)
+    if not admin_key:
+        return None
+
+    settings = config.get("settings", {})
+    hwid = settings.get("auth_hwid") or settings.get("hwid") or _default_hwid()
+    ttl_sec = _safe_int(settings.get("auth_ephemeral_ttl_sec", 180), 180, min_value=30)
+    ttl_sec = min(ttl_sec, 1800)
+
+    client_id = f"auto-{int(time.time())}-{secrets.token_hex(6)}"
+    client_secret = secrets.token_hex(32)
+    payload = {
+        "client_id": client_id,
+        "secret": client_secret,
+        "hwid": hwid,
+        "role": "user",
+        "one_time": True,
+        "ttl_sec": ttl_sec
+    }
+
+    headers = {
+        "x-auth-key": admin_key,
+        "Content-Type": "application/json"
+    }
+
+    try:
+        resp = requests.post(register_url, headers=headers, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        body = resp.json()
+        if not isinstance(body, dict) or body.get("ok") is not True:
+            print(f"警告: 自动注册返回异常，回退到 admin-key。register={register_url}")
+            return None
+        return {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "hwid": hwid
+        }
+    except Exception as e:
+        print(f"警告: 自动注册一次性凭据失败，回退到 admin-key: {e}")
+        return None
+
+
 def _resolve_ip_source_urls(settings):
     urls = []
     ip_sources = settings.get("ip_sources")
@@ -106,7 +165,7 @@ def _resolve_ip_source_urls(settings):
     return deduped
 
 
-def _build_ip_api_headers(config, source_url):
+def _build_ip_api_headers(config, source_url, timeout):
     settings = config.get("settings", {})
 
     client_id = (
@@ -132,7 +191,19 @@ def _build_ip_api_headers(config, source_url):
             hwid=hwid
         ), "signed-v1"
 
-    auth_key = settings.get("auth_key") or config.get("telegram", {}).get("auth_key", "")
+    auto_register_once = settings.get("auto_register_once", True)
+    if auto_register_once:
+        ephemeral = _auto_register_ephemeral_client(config, source_url, timeout)
+        if ephemeral:
+            return _build_signed_worker_headers(
+                source_url,
+                "GET",
+                client_id=ephemeral["client_id"],
+                client_secret=ephemeral["client_secret"],
+                hwid=ephemeral["hwid"]
+            ), "signed-auto-once"
+
+    auth_key = _get_admin_auth_key(config)
     if auth_key:
         return {"x-auth-key": auth_key}, "admin-key"
     return {}, "none"
@@ -229,7 +300,7 @@ def fetch_ips(config, current_ip=None):
         print(f"已将当前解析 IP {current_ip} 加入测速池进行对比。")
 
     for source_url in source_urls:
-        headers, auth_mode = _build_ip_api_headers(config, source_url)
+        headers, auth_mode = _build_ip_api_headers(config, source_url, timeout)
         try:
             print(f"正在从接口获取 IP 数据: {source_url} (auth={auth_mode})")
             resp = requests.get(source_url, headers=headers, timeout=timeout)
