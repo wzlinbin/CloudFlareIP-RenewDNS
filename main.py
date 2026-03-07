@@ -99,10 +99,10 @@ def _show_tks_page_content():
     print("本项目GitHub地址：https://github.com/wzlinbin/CloudFlareIP-RenewDNS")
     print("如果这个软件对你有帮助，麻烦给个🌟，也可以点击下面链接请作者喝杯咖啡，并将您的赞助列入项目支持人员列表")
     if sponsor_text:
-        print(f"本项目赞助人员感谢人员：{sponsor_text}")
+        print(f"感谢本项目赞助人员：{sponsor_text}")
     else:
-        print("本项目赞助人员感谢人员：获取失败，请访问下方链接查看")
-    print("https://cloudflareip.ocisg.xyz/tks")
+        print("感谢本项目赞助人员：获取失败，请访问下方链接查看")
+    print("感谢页面：https://cloudflareip.ocisg.xyz/tks")
     print("========================")
    
 
@@ -2025,47 +2025,86 @@ def check_network_environment():
     """检测当前网络是否处于翻墙状态，避免测速结果失真"""
     print("正在检测网络环境...")
 
-    ip = country = isp = '未知'
-    country_code = ''
+    geo_timeout_sec = 2
+    restricted_timeout_sec = 2
+    ip = country = isp = "未知"
+    country_code = ""
+    non_cn_hit = None
+    restricted_reachable = False
 
     def _fetch_ipinfo_io():
-        r = requests.get("https://ipinfo.io/json", timeout=5)
+        r = requests.get("https://ipinfo.io/json", timeout=geo_timeout_sec)
+        r.raise_for_status()
         d = r.json()
-        return (d.get('ip','未知'), d.get('country',''), d.get('country','未知'), d.get('org','未知'))
+        return (
+            d.get("ip", "未知"),
+            d.get("country", ""),
+            d.get("country", "未知"),
+            d.get("org", "未知"),
+        )
 
     def _fetch_ipapi():
-        r = requests.get("http://ip-api.com/json/?fields=query,country,countryCode,isp", timeout=5)
+        r = requests.get("http://ip-api.com/json/?fields=query,country,countryCode,isp", timeout=geo_timeout_sec)
+        r.raise_for_status()
         d = r.json()
-        return (d.get('query','未知'), d.get('countryCode',''), d.get('country','未知'), d.get('isp','未知'))
+        return (
+            d.get("query", "未知"),
+            d.get("countryCode", ""),
+            d.get("country", "未知"),
+            d.get("isp", "未知"),
+        )
 
-    for fetch_fn in (_fetch_ipinfo_io, _fetch_ipapi):
-        try:
-            ip, country_code, country, isp = fetch_fn()
-            if ip != '未知':
+    def _probe_restricted(url):
+        r = requests.head(url, timeout=restricted_timeout_sec, allow_redirects=False)
+        if r.status_code == 405:
+            r = requests.get(url, timeout=restricted_timeout_sec, allow_redirects=False)
+        return r.status_code < 400
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        geo_futures = [
+            executor.submit(_fetch_ipinfo_io),
+            executor.submit(_fetch_ipapi),
+        ]
+        for future in as_completed(geo_futures):
+            try:
+                _ip, _country_code, _country, _isp = future.result()
+            except Exception:
+                continue
+            if _ip and _ip != "未知" and ip == "未知":
+                ip, country_code, country, isp = _ip, _country_code, _country, _isp
+            if _country_code and _country_code != "CN" and non_cn_hit is None:
+                non_cn_hit = (_country or "未知", _country_code)
+
+        probe_futures = [
+            executor.submit(_probe_restricted, "https://www.google.com/generate_204"),
+        ]
+        for future in as_completed(probe_futures):
+            try:
+                ok = future.result()
+            except Exception:
+                continue
+            if ok:
+                restricted_reachable = True
                 break
-        except Exception:
-            continue
-    else:
-        print("警告: 无法获取出口 IP 信息，跳过地区检测。")
-        country_code = 'CN'
 
-    if ip != '未知':
+    if ip != "未知":
         print(f"当前出口 IP: {ip} | 地区: {country} | ISP: {isp}")
+    else:
+        print("警告: 无法获取出口 IP 信息。")
 
-    if country_code not in ('CN', ''):
-        print(f"\n❌ 检测到出口 IP 位于 [{country}]，当前处于翻墙状态！")
+    if non_cn_hit is not None:
+        hit_country, _ = non_cn_hit
+        print(f"\n❌ 检测到出口 IP 位于 [{hit_country}]，当前处于翻墙状态！")
         print("   Cloudflare 优选测速需要在纯国内网络下进行，结果才有意义。")
         print("   请关闭代理 / VPN 后重新运行。")
         _exit_with_pause()
 
-    try:
-        test = requests.get("https://www.google.com", timeout=4)
-        if test.status_code < 400:
-            print("\n❌ 检测到 Google 可直接访问，当前处于翻墙状态！")
-            print("   请关闭代理 / VPN 后重新运行。")
-            _exit_with_pause()
-    except Exception:
-        pass
+    if restricted_reachable:
+        print("\n⚠️ 检测到受限站点可直连。")
+        print("   当前出口地区为 CN，该信号可能由运营商网络策略导致，不强制拦截。")
+        print("   若测速结果异常，请手动确认已关闭代理 / VPN。")
+        print("✅ 网络环境检测已通过，继续执行。\n")
+        return
 
     print("✅ 网络环境正常（未检测到翻墙），继续执行。\n")
 
@@ -2177,7 +2216,7 @@ def main():
     max_retries = _safe_int(settings.get('max_retries', 3), 3, min_value=1)
 
     # 2. 网络检测（主线程，翻墙状态下暂停后退出）
-    # check_network_environment()  # 暂时关闭网络环境检测
+    check_network_environment()
 
     # 3. 获取当前 DNS IP（仅开启 DNS 更新时）
     current_ip = None
@@ -2283,14 +2322,14 @@ def main():
                            f"解析 IP: <b>{sel_ip}</b>\n"
                            f"地区码: <b>{sel_reg}</b>\n"
                            f"实测速度: <b>{sel_spd} MB/s</b>")
-                    # push_notification(config, msg)  # 临时注释推送功能
+                    push_notification(config, msg)
                 elif update_status == "NO_CHANGE":
                     print("状态: 当前 IP 已是最优，无需更新。")
                 else:
                     msg = (f"❌ <b>DNS 优选 IP 更新失败</b>\n"
                            f"最优 IP: {sel_ip}\n"
                            f"原因: API 调用报错，请检查日志或令牌权限。")
-                    # push_notification(config, msg)  # 临时注释推送功能
+                    push_notification(config, msg)
                 _exit_with_pause(0)
                 return
 
@@ -2301,7 +2340,7 @@ def main():
                    f"地区码: <b>{best_reg}</b>\n"
                    f"实测速度: <b>{best_spd} MB/s</b>\n"
                    f"<i>(已完成多轮测速，每轮最优均已作为候选)</i>")
-            # push_notification(config, msg)  # 临时注释推送功能
+            push_notification(config, msg)
             _exit_with_pause(0)
             return
 
