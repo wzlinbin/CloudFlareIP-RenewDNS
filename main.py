@@ -228,6 +228,36 @@ def _get_config_path():
     return 'config.json'
 
 
+def _resolve_cfst_path():
+    candidates = []
+
+    # 1) 普通脚本运行：优先项目目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.join(script_dir, "cfst.exe"))
+
+    # 2) PyInstaller onefile/onedir：内嵌资源解包目录
+    meipass_dir = getattr(sys, "_MEIPASS", "")
+    if meipass_dir:
+        candidates.append(os.path.join(meipass_dir, "cfst.exe"))
+
+    # 3) 可执行文件所在目录（便于手动替换 cfst）
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.append(os.path.join(exe_dir, "cfst.exe"))
+
+    # 4) 当前工作目录兜底
+    candidates.append(os.path.abspath("cfst.exe"))
+
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        if os.path.exists(path):
+            return path
+    return ""
+
+
 def _build_default_config():
     return {
         "cloudflare": {},
@@ -1801,7 +1831,8 @@ def fetch_ips(config, current_ip=None):
 def run_speed_test(config):
     """运行 CloudflareSpeedTest 并解析生成的 CSV 结果"""
     print("正在运行 CloudflareSpeedTest...")
-    if not os.path.exists('cfst.exe'):
+    cfst_path = _resolve_cfst_path()
+    if not cfst_path:
         print("错误: 未找到 cfst.exe，请确保它位于项目根目录下。")
         return None, None, None
 
@@ -1810,7 +1841,7 @@ def run_speed_test(config):
 
     try:
         subprocess.run(
-            ['cfst.exe', '-f', 'ip.txt', '-o', 'result.csv',
+            [cfst_path, '-f', 'ip.txt', '-o', 'result.csv',
              '-n', str(max_test), '-dn', str(top_n)],
             input='\n', text=True, check=True, timeout=300
         )
