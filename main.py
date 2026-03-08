@@ -2598,7 +2598,7 @@ def push_notification(config, message):
 # 网络环境检测模块
 # ============================================================
 def check_network_environment():
-    """检测当前网络是否处于翻墙状态，避免测速结果失真"""
+    """检测当前网络是否处于科学上网状态，避免测速结果失真"""
     print("正在检测网络环境...")
 
     geo_timeout_sec = 2
@@ -2670,7 +2670,7 @@ def check_network_environment():
 
     if non_cn_hit is not None:
         hit_country, _ = non_cn_hit
-        print(f"\n❌ 检测到出口 IP 位于 [{hit_country}]，当前处于翻墙状态！")
+        print(f"\n❌ 检测到出口 IP 位于 [{hit_country}]，当前处于科学上网状态！")
         print("   Cloudflare 优选测速需要在纯国内网络下进行，结果才有意义。")
         print("   请关闭代理 / VPN 后重新运行。")
         _exit_with_pause()
@@ -2682,7 +2682,7 @@ def check_network_environment():
         print("✅ 网络环境检测已通过，继续执行。\n")
         return
 
-    print("✅ 网络环境正常（未检测到翻墙），继续执行。\n")
+    print("✅ 网络环境正常（未检测到科学上网），继续执行。\n")
 
 
 def show_help_menu():
