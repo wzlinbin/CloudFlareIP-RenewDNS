@@ -1,8 +1,0 @@
-# 1. 修正名称为全小写
-name = "cloudflareip-renewdns"
-
-# 2. 指定入口文件
-main = "cfworker.js"
-
-# 3. 设定兼容性日期
-compatibility_date = "2026-03-01"

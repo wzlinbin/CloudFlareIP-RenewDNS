@@ -17,12 +17,65 @@ import uuid
 import base64
 import datetime
 import xml.etree.ElementTree as ET
+import builtins
 from urllib.parse import urlparse, quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Windows 终端强制 UTF-8 输出，避免 emoji / 中文字符编码错误
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
+
+
+def _enable_windows_ansi():
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    except Exception:
+        pass
+
+
+_enable_windows_ansi()
+
+_ANSI_RESET = "\033[0m"
+_ANSI_BOLD = "\033[1m"
+_ANSI_RED = "\033[31m"
+_ANSI_YELLOW = "\033[33m"
+_ANSI_GREEN = "\033[32m"
+_ANSI_CYAN = "\033[36m"
+
+
+def _style_console_text(text):
+    s = str(text)
+    if "\033[" in s:
+        return s
+
+    fail_keywords = ("失败", "错误", "❌", "Access Denied", "超时", "无效")
+    warn_keywords = ("警告", "⚠️", "⚠", "提示")
+    ok_keywords = ("成功", "通过", "✅")
+
+    if any(k in s for k in fail_keywords):
+        return f"{_ANSI_BOLD}{_ANSI_RED}{s}{_ANSI_RESET}"
+    if any(k in s for k in warn_keywords):
+        return f"{_ANSI_BOLD}{_ANSI_YELLOW}{s}{_ANSI_RESET}"
+    if any(k in s for k in ok_keywords):
+        return f"{_ANSI_BOLD}{_ANSI_GREEN}{s}{_ANSI_RESET}"
+    if "帮助" in s and "====" in s:
+        return f"{_ANSI_BOLD}{_ANSI_CYAN}{s}{_ANSI_RESET}"
+    return s
+
+
+def print(*args, **kwargs):
+    styled_args = [
+        _style_console_text(arg) if isinstance(arg, str) else arg
+        for arg in args
+    ]
+    return builtins.print(*styled_args, **kwargs)
 
 
 def _exit_with_pause(code=1):
@@ -111,16 +164,16 @@ def _escape_html(value):
 
 def _append_ack_to_push_message(msg):
     sponsor_text = _fetch_tks_sponsor_text()
-    sponsor_line = f"感谢本项目赞助人员：{sponsor_text}" if sponsor_text else "感谢本项目赞助人员：详见感谢页面"
+    sponsor_line = sponsor_text if sponsor_text else "Shangh、xiaoliu、ip"
     ack = (
         "\n\n"
         "<b>========致谢========</b>\n"
-        "\n"
         "<b>本项目GitHub地址：</b>https://github.com/wzlinbin/CloudFlareIP-RenewDNS\n"
         "<b>感谢</b> https://github.com/XIU2/CloudflareSpeedTest 项目，提供了测速模块能力。\n"
-        "\n"
-        f"<b>{_escape_html(sponsor_line)}</b>\n"
+        "如果这个软件对你有帮助，麻烦给个🌟，也可以点击下面链接请作者喝杯咖啡，并将您的赞助列入项目支持人员列表\n"
+        f"感谢本项目赞助人员：{_escape_html(sponsor_line)}\n"
         "<b>感谢页面：</b>https://cloudflareip.ocisg.xyz/tks\n"
+        "<b>讨论TG：</b>https://t.me/iprenewdns\n"
         "<b>========================</b>"
     )
     return f"{msg}{ack}"
@@ -128,15 +181,14 @@ def _append_ack_to_push_message(msg):
 
 def _show_tks_page_content():
     sponsor_text = _fetch_tks_sponsor_text()
+    sponsor_line = sponsor_text if sponsor_text else "Shangh、xiaoliu、ip"
     print("\n========致谢========")
     print("本项目GitHub地址：https://github.com/wzlinbin/CloudFlareIP-RenewDNS")
     print("感谢 https://github.com/XIU2/CloudflareSpeedTest 项目，提供了测速模块能力。")
     print("如果这个软件对你有帮助，麻烦给个🌟，也可以点击下面链接请作者喝杯咖啡，并将您的赞助列入项目支持人员列表")
-    if sponsor_text:
-        print(f"感谢本项目赞助人员：{sponsor_text}")
-    else:
-        print("感谢本项目赞助人员：获取失败，请访问下方链接查看")
+    print(f"感谢本项目赞助人员：{sponsor_line}")
     print("感谢页面：https://cloudflareip.ocisg.xyz/tks")
+    print("讨论TG：https://t.me/iprenewdns")
     print("========================")
    
 
@@ -708,7 +760,7 @@ def _extract_dns_profile_data(config, provider):
     for key in keys:
         if key in source:
             data[key] = source.get(key)
-    return data
+    return _normalize_dns_profile_data(provider, data)
 
 
 def _dns_profile_target_label(provider, data):
@@ -792,12 +844,29 @@ def _normalize_dns_profile_data(provider, data):
     data = data if isinstance(data, dict) else {}
     keys = list(dict.fromkeys(_dns_required_fields(provider) + _dns_optional_fields(provider)))
     normalized = {}
+
+    lower_case_keys = {
+        "cloudflare": {"dns_name"},
+        "dnspod": {"domain", "sub_domain"},
+        "aliyun": {"domain", "rr"},
+        "route53": {"record_name"},
+        "huawei": {"record_name"},
+        "gcp": {"record_name"},
+        "azure": {"zone_name", "record_name"},
+    }
+    provider_lower_keys = lower_case_keys.get(provider, set())
+
     for key in keys:
         if key not in data:
             continue
         value = data.get(key)
         if isinstance(value, str):
             value = value.strip()
+            if key in provider_lower_keys:
+                if value != "@":
+                    value = value.lower()
+                else:
+                    value = "@"
         normalized[key] = value
     return normalized
 
@@ -839,6 +908,7 @@ def _ensure_dns_profiles(config):
             if isinstance(raw_data, dict):
                 allowed_keys = list(dict.fromkeys(_dns_required_fields(provider) + _dns_optional_fields(provider)))
                 data = {k: raw_data.get(k) for k in allowed_keys if k in raw_data}
+                data = _normalize_dns_profile_data(provider, data)
             else:
                 data = {}
             profile = {
@@ -1308,7 +1378,7 @@ def _create_dns_profile(config):
     temp_cfg = _build_empty_dns_wizard_config(config)
     if not _run_dns_provider_wizard(temp_cfg, auto_save=False):
         print("已取消新增配置。")
-        return False
+        return None
     new_profile = _build_dns_profile_from_config(temp_cfg)
     missing = _dns_profile_missing_fields(new_profile)
     if missing:
@@ -1472,6 +1542,7 @@ def _send_telegram_message(config, chat_id, text, parse_mode="HTML", disable_web
         "parse_mode": parse_mode,
         "disable_web_page_preview": disable_web_page_preview
     }
+    payload_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     def _parse_tg_error(status, body):
         if isinstance(body, dict):
@@ -1490,7 +1561,9 @@ def _send_telegram_message(config, chat_id, text, parse_mode="HTML", disable_web
         return f"HTTP {status}"
 
     def _post(url, headers):
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        merged_headers = dict(headers or {})
+        merged_headers["Content-Type"] = "application/json; charset=utf-8"
+        resp = requests.post(url, headers=merged_headers, data=payload_bytes, timeout=timeout)
         status = getattr(resp, "status_code", 0)
         body = {}
         try:
@@ -2583,27 +2656,29 @@ def check_network_environment():
 
 def show_help_menu():
     print("\n================ 帮助 ================")
-    print("【主菜单说明】")
-    print("1、快速获取优选IP：")
-    print("   适用于没有域名的场景，仅测速并输出推荐IP，不执行DNS更新。")
-    print("2、获取优选IP动态更新DNS：")
-    print("   适用于已有域名场景，支持Cloudflare/DNSPod/阿里云/Route53/华为云/GCP/Azure。")
-    print("3、系统设置：")
-    print("   配置Telegram推送、自定义优选IP汇聚源地址。")
-    print("4、帮助：")
-    print("   查看各模块和菜单功能说明。")
-    print("5、退出：")
-    print("   结束程序。")
+    print("【系统功能介绍】")
+    print("本系统用于自动获取Cloudflare优选IP，并可按测速结果动态更新DNS解析记录。")
+    print("支持多DNS服务商：Cloudflare、DNSPod、阿里云DNS、AWS Route53、华为云DNS、Google Cloud DNS、Azure DNS。")
+    print("支持官方IP源与自定义IP汇聚源；支持多轮测速、候选池排序与Telegram结果推送。")
     print("")
-    print("【动态更新DNS流程说明】")
-    print("1、先进入“新增/修改/删除 待更新域名配置”，维护域名与服务商凭据。")
-    print("2、选择官方源或自定义源拉取IP。")
-    print("3、系统执行多轮测速，每轮保留最优候选。")
-    print("4、确认后将候选最优IP更新到目标DNS记录。")
+    print("【使用指南】")
+    print("1、首次使用建议先完成系统设置：")
+    print("   - 配置Telegram Bot Token与Chat ID（用于结果通知）；")
+    print("   - 按需设置自定义优选IP源地址。")
+    print("2、如需自动更新DNS：先新增并验证域名配置（服务商凭据 + 目标域名）。")
+    print("3、启动测速后，系统会进行多轮测试并维护候选最优IP。")
+    print("4、确认结果后，系统调用对应服务商API完成DNS更新。")
+    print("5、无域名场景可仅测速获取推荐IP，不执行DNS更新。")
     print("")
-    print("【系统设置说明】")
-    print("- Telegram Bot推送：用于接收测速结果和DNS更新结果。")
-    print("- 自定义优选IP源地址：用于接入你私有化部署的IP汇聚接口。")
+    print("【注意事项】")
+    print("- 请确保网络环境稳定，测速时尽量避免代理/VPN干扰。")
+    print("- 若提示未找到A记录，请先在DNS控制台创建对应A记录。")
+    print("- 若提示凭据或权限错误，请检查Token/Key、Zone/项目/资源组等配置。")
+    print("- 建议不要将包含密钥的配置文件上传到公共仓库。")
+    print("- 自定义IP源请确保接口可访问且返回有效IPv4数据。")
+    print("")
+    print("【项目地址】")
+    print("https://github.com/wzlinbin/CloudFlareIP-RenewDNS")
     print("======================================\n")
 
 
@@ -2640,16 +2715,24 @@ def main():
                 profiles = _ensure_dns_profiles(config)
                 if profiles:
                     break
-                print("未检测到待更新域名配置，进入引导新增流程。")
-                if _create_dns_profile(config):
+                print(f"{_ANSI_BOLD}{_ANSI_RED}未检测到待更新域名配置，进入引导新增流程。{_ANSI_RESET}")
+                create_result = _create_dns_profile(config)
+                if create_result is True:
+                    break
+                if create_result is None:
+                    print("已取消新增配置，返回主菜单。")
                     break
                 print("配置验证未通过，请按提示重新配置。")
+
+            if not _ensure_dns_profiles(config):
+                continue
 
             while True:
                 print("\n请选择操作（默认 2）：")
                 print("1、新增/修改/删除 待更新域名配置")
                 print("2、使用软件官方源进行测速并更新域名解析")
                 print("3、自定义优选IP源进行测速并更新域名解析")
+                print("4、返回")
 
                 sub_choice = input("> ").strip()
                 if not sub_choice:
@@ -2658,19 +2741,29 @@ def main():
                 if sub_choice == "1":
                     manage_dns_profiles(config)
                     continue
+                if sub_choice == "4":
+                    print("已返回上层菜单。")
+                    break
 
                 if sub_choice not in ("2", "3"):
                     print("无效选择，请重试。")
                     continue
 
-                selected_profile = _select_dns_profile(
-                    config,
-                    prompt_text="请选择用于本次更新的域名配置序号",
-                    allow_back=True,
-                )
-                if not selected_profile:
-                    print("已返回上层菜单。")
-                    continue
+                profiles = _ensure_dns_profiles(config)
+                if len(profiles) == 1:
+                    selected_profile = profiles[0]
+                    config.setdefault("settings", {})["active_dns_profile_id"] = selected_profile.get("id", "")
+                    save_config(config)
+                    print(f"已自动选择唯一配置: {selected_profile.get('name', '')}")
+                else:
+                    selected_profile = _select_dns_profile(
+                        config,
+                        prompt_text="请选择用于本次更新的域名配置序号",
+                        allow_back=True,
+                    )
+                    if not selected_profile:
+                        print("已返回上层菜单。")
+                        continue
 
                 missing = _dns_profile_missing_fields(selected_profile)
                 if missing:
@@ -2789,19 +2882,22 @@ def main():
                 tag = "  <- 当前推荐" if i == 1 else ""
                 print(f"  [{i}] 第 {rnd} 轮  {h_ip} | {h_reg} | {h_spd} MB/s{tag}")
             print(f"{'='*56}")
-            print("操作：R=继续下一轮测速  回车/Y=进入结果处理")
+            print("操作：R=继续下一轮测速  回车/Y=进入结果处理  Q=退出")
             try:
                 next_action = input("> ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 next_action = ''
             if next_action == 'r':
                 continue
+            if next_action in ('q', 'quit', 'exit'):
+                print("已退出。")
+                return
 
             if enable_dns_update:
                 _, sel_ip, sel_spd, sel_reg, _ = sorted_history[0]
                 print(f"当前最优推荐: {sel_ip} | {sel_reg} | {sel_spd} MB/s")
                 dns_target_label = _get_dns_target_label(config)
-                print(f"确认使用最优推荐更新 {dns_target_label}？（回车/Y=确认，R=继续测速）")
+                print(f"确认使用最优推荐更新 {dns_target_label}？（回车/Y=确认，R=继续测速，Q=退出）")
                 try:
                     final_action = input("> ").strip().lower()
                 except (EOFError, KeyboardInterrupt):
@@ -2809,6 +2905,9 @@ def main():
 
                 if final_action == 'r':
                     continue
+                if final_action in ('q', 'quit', 'exit'):
+                    print("已退出。")
+                    return
                 if final_action not in ('y', ''):
                     print("已取消本次更新，继续测速。")
                     continue
