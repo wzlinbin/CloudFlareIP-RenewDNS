@@ -1,46 +1,44 @@
 # CloudFlareIP-RenewDNS 🚀
 
-自动获取 Cloudflare 优选 IP，支持多轮测速，并按结果自动更新多家 DNS 服务商记录。
+自动获取 Cloudflare 优选 IP，支持多轮测速，并可按结果自动更新多个 DNS 服务商解析记录。
 
 ## ✨ 功能特性
 
-- 优选 IP 拉取与去重：从官方或自定义 IP 汇聚源获取 IPv4。
-- 多轮测速：每轮保留最优结果，形成候选池，支持继续测速或退出。
-- DNS 自动更新：支持以下服务商：
-  - Cloudflare
-  - DNSPod
-  - 阿里云 DNS
-  - AWS Route53
-  - 华为云 DNS
-  - Google Cloud DNS
-  - Azure DNS
-- Telegram 推送：
-  - 可在系统设置中配置 Bot Token / Chat ID。
-  - 配置完成后会自动发送验证消息。
-  - 测速/更新结果可自动推送。
-- Worker 聚合与代理：
-  - `cfworker.js` 提供聚合接口（根路径 `/`）与 `/tg`、`/cf` 代理。
-- 配置友好：
-  - 首次运行若无 `config.json`，自动创建默认配置。
+- 优选 IP 获取与去重（官方源 / 自定义源）
+- 多轮测速，保留每轮最优作为候选
+- DNS 自动更新（多服务商）
+- Telegram 推送（配置后自动验证）
+- 首次运行自动创建 `config.json`
+
+支持的 DNS 服务商：
+
+- Cloudflare
+- DNSPod
+- 阿里云 DNS
+- AWS Route53
+- 华为云 DNS
+- Google Cloud DNS
+- Azure DNS
 
 ## 📁 项目结构
 
 ```text
 .
-├─ main.py                 # 主程序（测速、配置、DNS更新、TG推送）
-├─ cfst.exe                # CloudflareSpeedTest 可执行文件
-├─ cfworker.js             # Cloudflare Worker（聚合 + /tg + /cf 代理）
-├─ cfwork-api-kv.js        # 高级版 Worker（可选）
-├─ wrangler.toml           # Worker 部署配置
+├─ main.py
+├─ cfst.exe
+├─ cfworker.js
+├─ cfwork-api-kv.js          # 高级版（可选）
+├─ docs/
+│  └─ WORKER_DEPLOY.md
 └─ .github/workflows/deploy.yml
 ```
 
 ## 🧩 运行环境
 
-- Windows（推荐，已适配终端输出）
+- Windows 10/11（推荐）
 - Python 3.10+（建议 3.12）
-- `requests` 库
-- `cfst.exe` 放在项目根目录
+- 依赖：`requests`
+- `cfst.exe` 与程序放同目录
 
 安装依赖：
 
@@ -48,65 +46,116 @@
 pip install requests
 ```
 
-## ⚡ 快速开始
+## ⚡ Windows 直接运行说明
 
-1. 克隆项目并进入目录。
-2. 确认 `cfst.exe` 存在于项目根目录。
-3. 运行：
+### 方式 A：直接运行 Python 脚本
 
 ```bash
 python main.py
 ```
 
-4. 首次运行会自动创建 `config.json`（若不存在）。
-5. 按菜单选择：
-   - `1` 仅测速拿优选 IP
-   - `2` 测速并更新 DNS
-   - `3` 系统设置（TG 推送、自定义 IP 源）
-   - `4` 帮助
-   - `5` 退出
+### 方式 B：运行打包好的 EXE
 
-## ⚙️ 配置说明（config.json）
+将以下文件放在同一目录后直接双击运行：
 
-程序会自动维护配置，常用字段如下：
+- `CFIP-RenewDNS.exe`
+- `cfst.exe`
+- `_internal` 目录（若是 `onedir` 打包）
 
-- `settings.ip_api_url`: 官方 IP 源地址（默认 `https://cloudflareip.ocisg.xyz/api/data`）
-- `settings.custom_ip_api_url`: 自定义 IP 源地址（可选）
-- `settings.max_ips`: `cfst` 延迟测速并发参数（`-n`）
-- `settings.top_n`: 下载测速候选数量（`-dn`）
-- `settings.timeout`: 接口超时秒数
-- `settings.max_retries`: 单轮测速失败重试次数
-- `telegram.bot_token`: Telegram Bot Token
-- `telegram.chat_id`: Telegram 用户/群 ID（多个用英文逗号）
-- `dns_profiles`: 多 DNS 配置列表
-- `settings.active_dns_profile_id`: 当前生效的 DNS 配置 ID
+建议使用发布包：`dist/CFIP-RenewDNS.zip`。  
+首次运行若无 `config.json`，程序会自动生成默认配置文件。
 
-## 🔄 DNS 更新流程建议
+## 🧭 使用流程
 
-1. 在 DNS 服务商面板先创建目标 `A` 记录。
-2. 在程序中新增/修改域名配置并通过校验。
-3. 选择官方或自定义 IP 源进行测速。
-4. 确认使用最优结果后执行 DNS 更新。
+1. 进入系统设置，先配置 Telegram（可选但推荐）
+2. 如需自动更新 DNS，先新增待更新域名配置
+3. 选择官方源或自定义源开始测速
+4. 查看候选池并确认更新
 
-## 📨 Telegram 推送说明
+## 📨 Telegram Bot 申请与配置步骤
 
-- 在 `系统设置 -> 设置Telegram Bot推送` 中填写 Token 和 Chat ID。
-- 配置保存后会自动发送一条测试消息做有效性验证。
-- 发送失败时会提示常见原因（Token/Chat ID/会话未启动/网络问题等）。
+1. 在 Telegram 搜索 `@BotFather`
+2. 发送 `/newbot`，按提示创建机器人
+3. 获得 `Bot Token`（形如 `123456:ABC...`）
+4. 给你的机器人先发送一次 `/start`
+5. 获取你的 `Chat ID`：
+   - 方式 1：使用 `@userinfobot`
+   - 方式 2：调用 `getUpdates` 查看 `chat.id`
+6. 在程序菜单 `系统设置 -> 设置Telegram Bot推送` 填入 Token 和 Chat ID
+7. 保存后程序会自动发一条测试消息验证配置
 
-## 🔐 安全与注意事项
+## 🔑 各 DNS 服务商 API / Token 获取说明
 
-- 不要把包含密钥的配置文件提交到公开仓库。
-- 测速前建议关闭代理/VPN，避免结果失真。
-- 自定义 IP 源请确保可访问且返回有效 IPv4 数据。
-- 若提示“未找到 A 记录”，请先在 DNS 控制台创建记录。
-- 若提示“凭据无效或权限不足”，请检查 Token/Key 权限与资源范围。
+### 1. Cloudflare
 
-## ☁️ Worker 部署（cfworker.js）
+- 控制台路径：`My Profile -> API Tokens`
+- 创建 Token，建议最小权限：
+  - Zone:DNS:Edit
+  - Zone:Zone:Read
+- `Zone ID` 在域名 Overview 页面可查看
 
-Worker 的完整部署说明见：
+### 2. DNSPod（腾讯云）
+
+- 控制台路径：腾讯云 `访问管理 CAM -> API密钥管理`
+- 获取 `SecretId` / `SecretKey`
+- 需要提供主域名 `domain` 和主机记录 `sub_domain`
+
+### 3. 阿里云 DNS
+
+- 控制台路径：阿里云 `RAM -> AccessKey`
+- 建议创建子账号并授予 DNS 最小权限
+- 获取 `AccessKeyId` / `AccessKeySecret`
+
+### 4. AWS Route53
+
+- 控制台路径：AWS `IAM -> Users -> Security credentials`
+- 获取 `Access key ID` / `Secret access key`
+- 需要 `Hosted Zone ID` 与 `record_name`
+- 建议权限包含：
+  - `route53:ListHostedZones`
+  - `route53:ListResourceRecordSets`
+  - `route53:ChangeResourceRecordSets`
+
+### 5. 华为云 DNS
+
+- 当前程序使用 `X-Auth-Token`
+- 可通过华为云 IAM 鉴权接口获取临时 Token
+- 需要 `zone_id` 与 `record_name`
+
+### 6. Google Cloud DNS
+
+- 当前程序使用 `Access Token`
+- 需具备 Cloud DNS 管理权限
+- 需要 `project_id`、`managed_zone`、`record_name`
+
+### 7. Azure DNS
+
+- 当前程序使用 Azure 管理 API `Access Token`
+- Token 资源为：`https://management.azure.com/`
+- 需要 `subscription_id`、`resource_group`、`zone_name`、`record_name`
+
+## ☁️ Worker 部署（仅 cfworker.js）
+
+部署说明见：
 
 - [docs/WORKER_DEPLOY.md](docs/WORKER_DEPLOY.md)
+
+## ⚙️ 配置说明（核心字段）
+
+- `settings.ip_api_url`：官方源地址
+- `settings.custom_ip_api_url`：自定义源地址
+- `settings.max_ips`：延迟测速并发（`cfst -n`）
+- `settings.top_n`：下载测速候选（`cfst -dn`）
+- `settings.timeout`：请求超时
+- `settings.max_retries`：单轮失败重试次数
+- `telegram.bot_token` / `telegram.chat_id`
+- `dns_profiles`：多域名配置
+
+## 🔐 安全建议
+
+- 不要把含密钥的 `config.json` 上传到公开仓库
+- 建议使用最小权限 API Token
+- 测速前尽量关闭代理/VPN，避免结果失真
 
 ## 🙏 致谢
 

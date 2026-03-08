@@ -1,112 +1,57 @@
 # ☁️ Cloudflare Worker 部署指引（仅 cfworker.js）
 
-本文档仅说明如何部署 `cfworker.js`。
+本指引仅说明 `cfworker.js`，并使用 Cloudflare 官方一键部署按钮，不使用 Wrangler 命令行。
 
-## 1. 📌 功能说明
+## 🚀 一键部署
 
-`cfworker.js` 提供以下能力：
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/deploy/?url=https://github.com/wzlinbin/CloudFlareIP-RenewDNS/tree/main)
 
-- `GET /`：聚合多个来源的 Cloudflare IPv4（JSON/HTML）
-- `/tg/*`：转发 Telegram Bot API
-- `/cf/*`：转发 Cloudflare API
+## 📋 部署前准备
 
-说明：
+- 你需要有 Cloudflare 账号并已登录
+- 建议先 Fork 本项目到你的 GitHub（便于后续自行维护）
 
-- 该脚本不依赖 KV，不需要绑定 KV Namespace。
-- 该脚本不包含签名鉴权逻辑，部署步骤更简单。
+## 🧭 部署步骤
 
-## 2. 🧰 前置条件
+1. 点击上方 `Deploy to Cloudflare Workers` 按钮
+2. 在 Cloudflare 页面授权并确认部署仓库
+3. 按向导完成 Worker 创建
+4. 部署成功后获得 `workers.dev` 地址
 
-- Cloudflare 账号
-- Node.js（建议 LTS）
-- Wrangler CLI
+## ✅ 部署后验证
 
-```bash
-npm i -g wrangler
-wrangler login
+部署成功后可访问：
+
+- `https://<你的worker域名>/`（IP 聚合接口，返回 JSON/HTML）
+- `https://<你的worker域名>/tg/...`（Telegram API 代理）
+- `https://<你的worker域名>/cf/...`（Cloudflare API 代理）
+
+示例验证：
+
+```text
+https://<你的worker域名>/
+https://<你的worker域名>/tg/bot<token>/getMe
+https://<你的worker域名>/cf/client/v4/user/tokens/verify
 ```
 
-## 3. 📝 配置 wrangler.toml
+## 🔗 与主程序 main.py 对接
 
-确保 `main` 指向 `cfworker.js`：
+`cfworker.js` 的聚合接口在根路径 `/`，不是 `/api/data`。
 
-```toml
-name = "cloudflareip-renewdns"
-main = "cfworker.js"
-compatibility_date = "2026-03-01"
+在程序中配置“自定义优选IP源地址”时请填写：
+
+```text
+https://<你的worker域名>/
 ```
 
-## 4. ✅ 本地检查
+## 🌐 自定义域名（可选）
 
-```bash
-node --check cfworker.js
-```
-
-## 5. 🚀 部署
-
-```bash
-wrangler deploy
-```
-
-部署成功后会得到类似地址：
-
-- `https://<worker-name>.<subdomain>.workers.dev/`
-- `https://<worker-name>.<subdomain>.workers.dev/tg/...`
-- `https://<worker-name>.<subdomain>.workers.dev/cf/...`
-
-## 6. 🌐 自定义域名（可选）
-
-在 Cloudflare Dashboard 的 Worker 路由中绑定域名，例如：
+如需绑定自己的域名，可在 Cloudflare Dashboard 的 Worker 路由中配置：
 
 - `https://your-domain.example.com/*`
 
-## 7. 🧪 接口验证
+## ❓ 常见问题
 
-### 7.1 📊 聚合接口
-
-```bash
-curl -i https://<worker-domain>/
-```
-
-返回 JSON（默认）或 HTML（请求头 `Accept: text/html`）。
-
-### 7.2 📨 TG 代理
-
-```bash
-curl -i "https://<worker-domain>/tg/bot<token>/getMe"
-```
-
-### 7.3 🛡️ Cloudflare 代理
-
-```bash
-curl -i "https://<worker-domain>/cf/client/v4/user/tokens/verify"
-```
-
-## 8. 🔗 与 main.py 对接
-
-你的主程序默认官方源是：
-
-- `https://cloudflareip.ocisg.xyz/api/data`
-
-如果改用你自己部署的 `cfworker.js`，请在程序中设置“自定义优选IP源地址”为：
-
-- `https://<worker-domain>/`
-
-原因：
-
-- `cfworker.js` 的聚合数据接口在根路径 `/`，不是 `/api/data`。
-
-## 9. 🤖 GitHub Actions 自动部署（可选）
-
-仓库已有 `.github/workflows/deploy.yml`。  
-需要在 GitHub Secrets 配置：
-
-- `CLOUDFLARE_API_TOKEN`
-
-推送到 `main` 分支后会自动执行 `wrangler deploy`。
-
-## 10. ❓ 常见问题
-
-- `main` 配置错了：请确认 `wrangler.toml` 使用 `main = "cfworker.js"`。
-- 访问 `/` 失败：检查 Worker 是否部署成功、域名路由是否正确。
-- `tg/cf` 转发失败：检查上游 API 状态、Token 权限和网络连通性。
+- 打开 `/` 报错：检查 Worker 是否部署成功、域名是否生效
+- `/tg` 或 `/cf` 请求失败：检查上游 API Token/权限、目标接口是否可用
+- 主程序读不到数据：确认你填的是根路径 `/`，并非 `/api/data`
