@@ -2581,6 +2581,32 @@ def check_network_environment():
     print("✅ 网络环境正常（未检测到翻墙），继续执行。\n")
 
 
+def show_help_menu():
+    print("\n================ 帮助 ================")
+    print("【主菜单说明】")
+    print("1、快速获取优选IP：")
+    print("   适用于没有域名的场景，仅测速并输出推荐IP，不执行DNS更新。")
+    print("2、获取优选IP动态更新DNS：")
+    print("   适用于已有域名场景，支持Cloudflare/DNSPod/阿里云/Route53/华为云/GCP/Azure。")
+    print("3、系统设置：")
+    print("   配置Telegram推送、自定义优选IP汇聚源地址。")
+    print("4、帮助：")
+    print("   查看各模块和菜单功能说明。")
+    print("5、退出：")
+    print("   结束程序。")
+    print("")
+    print("【动态更新DNS流程说明】")
+    print("1、先进入“新增/修改/删除 待更新域名配置”，维护域名与服务商凭据。")
+    print("2、选择官方源或自定义源拉取IP。")
+    print("3、系统执行多轮测速，每轮保留最优候选。")
+    print("4、确认后将候选最优IP更新到目标DNS记录。")
+    print("")
+    print("【系统设置说明】")
+    print("- Telegram Bot推送：用于接收测速结果和DNS更新结果。")
+    print("- 自定义优选IP源地址：用于接入你私有化部署的IP汇聚接口。")
+    print("======================================\n")
+
+
 # ============================================================
 # 主执行流程
 # ============================================================
@@ -2598,7 +2624,8 @@ def main():
         print("1、快速获取优选IP（没有域名，仅需系统快速测速提供优选IP）")
         print("2、获取优选IP动态更新DNS （已有域名，支持多DNS服务商）")
         print("3、系统设置（设置Telegram Bot推送、自定义优选IP源地址）")
-        print("4、退出")
+        print("4、帮助")
+        print("5、退出")
         choice = input("> ").strip()
         if not choice:
             choice = '2'
@@ -2681,6 +2708,9 @@ def main():
             manage_system_settings(config)
             continue
         if choice == '4':
+            show_help_menu()
+            continue
+        if choice == '5':
             print("已退出。")
             return
         print("无效选择，请重试。")
