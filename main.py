@@ -67,6 +67,7 @@ def _brief_request_error(exc):
 DEFAULT_WORKER_BASE_URL = "https://cloudflareip.ocisg.xyz"
 DEFAULT_IP_SOURCE_URL = f"{DEFAULT_WORKER_BASE_URL}/api/data"
 TKS_PAGE_URL = f"{DEFAULT_WORKER_BASE_URL}/tks"
+_TKS_SPONSOR_CACHE = None
 
 
 def _strip_html_tags(value):
@@ -75,28 +76,61 @@ def _strip_html_tags(value):
 
 
 def _fetch_tks_sponsor_text():
+    global _TKS_SPONSOR_CACHE
+    if _TKS_SPONSOR_CACHE is not None:
+        return _TKS_SPONSOR_CACHE
     try:
         resp = requests.get(TKS_PAGE_URL, timeout=10)
         resp.raise_for_status()
         html = resp.text or ""
     except Exception:
-        return ""
+        _TKS_SPONSOR_CACHE = ""
+        return _TKS_SPONSOR_CACHE
 
     compact = re.sub(r"\s+", " ", html)
     m = re.search(r"项目赞助人员[：:]\s*(.*?)</p>", compact, flags=re.IGNORECASE)
     if m:
-        return _strip_html_tags(m.group(1))
+        _TKS_SPONSOR_CACHE = _strip_html_tags(m.group(1))
+        return _TKS_SPONSOR_CACHE
 
     plain = _strip_html_tags(compact)
     m = re.search(r"项目赞助人员[：:]\s*([^。；;\n\r]+)", plain)
-    return m.group(1).strip() if m else ""
+    _TKS_SPONSOR_CACHE = m.group(1).strip() if m else ""
+    return _TKS_SPONSOR_CACHE
+
+
+def _escape_html(value):
+    text = str(value or "")
+    return (text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;"))
+
+
+def _append_ack_to_push_message(msg):
+    sponsor_text = _fetch_tks_sponsor_text()
+    sponsor_line = f"感谢本项目赞助人员：{sponsor_text}" if sponsor_text else "感谢本项目赞助人员：详见感谢页面"
+    ack = (
+        "\n\n"
+        "<b>========致谢========</b>\n"
+        "\n"
+        "<b>本项目GitHub地址：</b>https://github.com/wzlinbin/CloudFlareIP-RenewDNS\n"
+        "<b>感谢</b> https://github.com/XIU2/CloudflareSpeedTest 项目，提供了测速模块能力。\n"
+        "\n"
+        f"<b>{_escape_html(sponsor_line)}</b>\n"
+        "<b>感谢页面：</b>https://cloudflareip.ocisg.xyz/tks\n"
+        "<b>========================</b>"
+    )
+    return f"{msg}{ack}"
 
 
 def _show_tks_page_content():
     sponsor_text = _fetch_tks_sponsor_text()
     print("\n========致谢========")
-    print("感谢https://github.com/XIU2/CloudflareSpeedTest 项目，提供了测速模块能力。")
     print("本项目GitHub地址：https://github.com/wzlinbin/CloudFlareIP-RenewDNS")
+    print("感谢 https://github.com/XIU2/CloudflareSpeedTest 项目，提供了测速模块能力。")
     print("如果这个软件对你有帮助，麻烦给个🌟，也可以点击下面链接请作者喝杯咖啡，并将您的赞助列入项目支持人员列表")
     if sponsor_text:
         print(f"感谢本项目赞助人员：{sponsor_text}")
@@ -140,6 +174,81 @@ def _get_config_path():
     if os.path.exists(config_path):
         return config_path
     return 'config.json'
+
+
+def _build_default_config():
+    return {
+        "cloudflare": {},
+        "dns": {
+            "provider": "cloudflare",
+            "dnspod": {
+                "secret_id": "",
+                "secret_key": "",
+                "domain": "",
+                "sub_domain": "@",
+                "record_line": "默认",
+                "ttl": 60,
+            },
+            "aliyun": {
+                "access_key_id": "",
+                "access_key_secret": "",
+                "domain": "",
+                "rr": "@",
+                "ttl": 60,
+                "endpoint": "https://alidns.aliyuncs.com/",
+            },
+            "route53": {
+                "access_key_id": "",
+                "secret_access_key": "",
+                "session_token": "",
+                "hosted_zone_id": "",
+                "record_name": "",
+                "ttl": 60,
+            },
+            "huawei": {
+                "token": "",
+                "zone_id": "",
+                "record_name": "",
+                "ttl": 60,
+                "base_url": "https://dns.myhuaweicloud.com",
+            },
+            "gcp": {
+                "access_token": "",
+                "project_id": "",
+                "managed_zone": "",
+                "record_name": "",
+                "ttl": 60,
+            },
+            "azure": {
+                "access_token": "",
+                "subscription_id": "",
+                "resource_group": "",
+                "zone_name": "",
+                "record_name": "@",
+                "ttl": 60,
+                "api_version": "2018-05-01",
+            },
+        },
+        "telegram": {
+            "auth_key": "",
+            "bot_token": "",
+            "chat_id": "",
+        },
+        "settings": {
+            "ip_api_url": DEFAULT_IP_SOURCE_URL,
+            "max_ips": 200,
+            "top_n": 10,
+            "timeout": 15,
+            "max_retries": 3,
+            "auth_key": "",
+            "auto_register_once": True,
+            "auth_ephemeral_ttl_sec": 180,
+            "invite_code": "",
+            "custom_ip_api_url": "",
+            "active_dns_profile_id": "",
+        },
+        "dns_profiles": [],
+    }
 
 
 def _default_hwid():
@@ -324,8 +433,11 @@ def load_config():
     """从 config.json 加载系统配置"""
     config_path = _get_config_path()
     if not os.path.exists(config_path):
-        print(f"错误: 配置文件 {config_path} 不存在！")
-        _exit_with_pause()
+        default_config = _build_default_config()
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(default_config, f, ensure_ascii=False, indent=2)
+        print(f"未检测到配置文件，已自动创建默认配置: {config_path}")
+        return default_config
     with open(config_path, 'r', encoding='utf-8-sig') as f:
         return json.load(f)
 
@@ -476,7 +588,11 @@ def _run_dns_provider_wizard(config, auto_save=True):
     print("\n请选择 DNS 解析供应商：")
     for no, _, name in providers:
         print(f"{no}. {name}")
+    print("8. 返回")
     selected_no = input(f"> （默认 {current_no}）").strip() or current_no
+    if selected_no == "8":
+        print("已返回上一级。")
+        return False
     selected = next((item for item in providers if item[0] == selected_no), None)
     if not selected:
         print("无效选择，保持当前供应商。")
@@ -494,7 +610,7 @@ def _run_dns_provider_wizard(config, auto_save=True):
         cf["dns_name"] = _prompt_text("需要更新的域名(dns_name)", str(cf.get("dns_name", "")).strip())
         if auto_save:
             save_config(config)
-        return
+        return True
 
     provider_cfg = dns_root.setdefault(provider, {})
     if provider == "dnspod":
@@ -541,6 +657,7 @@ def _run_dns_provider_wizard(config, auto_save=True):
 
     if auto_save:
         save_config(config)
+    return True
 
 
 def ensure_dns_update_config_ready(config):
@@ -553,7 +670,9 @@ def ensure_dns_update_config_ready(config):
     print(f"检测到 DNS 更新配置不完整（供应商: {_provider_name(provider)}）")
     print(f"缺少字段: {', '.join(missing)}")
     print("即将进入引导配置流程。")
-    _run_dns_provider_wizard(config)
+    if not _run_dns_provider_wizard(config):
+        print("已取消引导配置。")
+        return False
 
     provider = _get_dns_provider(config)
     missing = _missing_dns_config_fields(config)
@@ -947,25 +1066,249 @@ def _verify_dns_profile(config, profile):
     target_label = _dns_profile_target_label(provider, profile.get("data", {}))
     verify_cfg = copy.deepcopy(config)
     _apply_dns_profile_to_runtime_config(verify_cfg, profile)
+    verify_cfg.setdefault("settings", {})["_runtime_quiet_cloudflare"] = True
 
     print(f"正在验证配置可用性：{provider_name} | {target_label}")
-    try:
-        current_ip = get_current_dns_ip(verify_cfg)
-    except Exception as e:
-        print(f"验证失败：{provider_name} API 调用异常: {e}")
-        return False
 
-    if not current_ip:
-        print(f"验证失败：未找到 {target_label} 的 A 记录。请先在DNS控制面板增加A记录，再运行软件。")
+    if provider == "cloudflare":
+        ok, current_ip, reason = _verify_cloudflare_profile(verify_cfg, target_label)
+        if not ok:
+            print(reason)
+            return False
+        print(f"验证通过：{target_label} 当前解析 IP = {current_ip}")
+        return True
+
+    ok, current_ip, reason = _verify_other_provider_profile(verify_cfg, provider, target_label)
+    if not ok:
+        print(reason)
         return False
 
     print(f"验证通过：{target_label} 当前解析 IP = {current_ip}")
     return True
 
 
+def _verify_cloudflare_profile(config, target_label):
+    """Cloudflare 专用验证：区分凭据错误与无 A 记录。"""
+    try:
+        dns_name = str(config.get("cloudflare", {}).get("dns_name", "")).strip()
+        if not dns_name:
+            return False, None, "验证失败：Cloudflare 域名配置为空，请填写需要更新的域名。"
+        res = cloudflare_request(config, "GET", params={"name": dns_name})
+    except Exception:
+        return False, None, "验证失败：Cloudflare 接口请求失败，请检查网络后重试。"
+
+    if res is None:
+        return False, None, "验证失败：Cloudflare 接口不可用，请检查网络后重试。"
+
+    status = getattr(res, "status_code", 0)
+    body = {}
+    try:
+        body = res.json()
+    except Exception:
+        body = {}
+
+    if status in (401, 403):
+        return False, None, "验证失败：Cloudflare API Token 无效或权限不足。"
+    if status == 404:
+        return False, None, "验证失败：Cloudflare Zone ID 可能错误或无访问权限。"
+    if status != 200:
+        return False, None, f"验证失败：Cloudflare 接口返回异常（HTTP {status}）。"
+
+    if isinstance(body, dict) and body.get("success") is False:
+        errors = body.get("errors", [])
+        err_code = ""
+        err_msg = ""
+        if isinstance(errors, list) and errors:
+            first = errors[0]
+            if isinstance(first, dict):
+                err_code = str(first.get("code", "")).strip()
+                err_msg = str(first.get("message", "")).strip()
+        if err_code in {"10000", "10001", "9109"}:
+            return False, None, "验证失败：Cloudflare API Token 无效、过期或权限不足。"
+        if err_code in {"7003", "7000"}:
+            return False, None, "验证失败：Cloudflare Zone ID 可能错误。"
+        if err_msg:
+            return False, None, f"验证失败：Cloudflare 接口返回错误（{err_msg}）。"
+        return False, None, "验证失败：Cloudflare 接口返回错误，请检查配置。"
+
+    records = []
+    if isinstance(body, dict):
+        result = body.get("result", [])
+        if isinstance(result, list):
+            records = result
+    a_records = [r for r in records if str(r.get("type", "")).upper() == "A"]
+    if not a_records:
+        return False, None, f"验证失败：未找到 {target_label} 的 A 记录。请先在DNS控制面板增加A记录，再运行软件。"
+
+    current_ip = str(a_records[0].get("content", "")).strip() or "未知"
+    return True, current_ip, ""
+
+
+def _verify_missing_a_record_message(target_label):
+    return f"验证失败：未找到 {target_label} 的 A 记录。请先在DNS控制面板增加A记录，再运行软件。"
+
+
+def _verify_http_status(exc):
+    resp = getattr(exc, "response", None)
+    return getattr(resp, "status_code", None)
+
+
+def _verify_error_blob(exc):
+    chunks = [str(exc)]
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        try:
+            payload = resp.json()
+            chunks.append(json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            pass
+        try:
+            txt = resp.text
+        except Exception:
+            txt = ""
+        if txt:
+            chunks.append(txt)
+    return " ".join(chunks).lower()
+
+
+def _verify_other_provider_profile(config, provider, target_label):
+    if provider == "azure":
+        return _verify_azure_profile(config, target_label)
+    try:
+        current_ip = get_current_dns_ip(config)
+    except Exception as exc:
+        return False, None, _verify_provider_error_message(provider, exc, target_label)
+
+    if not current_ip:
+        return False, None, _verify_missing_a_record_message(target_label)
+    return True, current_ip, ""
+
+
+def _verify_provider_error_message(provider, exc, target_label):
+    provider_name = _provider_name(provider)
+    if isinstance(exc, ValueError):
+        return f"验证失败：{provider_name} 配置不完整，请补全必填字段后重试。"
+    if isinstance(exc, requests.exceptions.Timeout):
+        return f"验证失败：{provider_name} 接口请求超时，请稍后重试。"
+    if isinstance(exc, requests.exceptions.SSLError):
+        return f"验证失败：{provider_name} SSL 连接失败，请检查网络环境。"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return f"验证失败：{provider_name} 网络连接失败，请检查网络后重试。"
+
+    status = _verify_http_status(exc)
+    text = _verify_error_blob(exc)
+
+    def has_any(words):
+        return any(w in text for w in words)
+
+    if provider == "dnspod":
+        if status in (401, 403) or has_any([
+            "authfailure", "secretidnotfound", "signaturefailure",
+            "unauthorizedoperation", "secret key", "secretid", "无权限"
+        ]):
+            return "验证失败：DNSPod 凭据无效或权限不足。"
+        if status == 404 or has_any([
+            "invalidparameter.domain", "resourcenotfound.domain",
+            "domainnotexists", "subdomain", "recordline"
+        ]):
+            return f"验证失败：DNSPod 域名配置有误（请检查 Domain/SubDomain）。"
+
+    if provider == "aliyun":
+        if status in (401, 403) or has_any([
+            "invalidaccesskeyid", "signaturedoesnotmatch",
+            "invalidsecuritytoken", "forbidden", "unauthorized"
+        ]):
+            return "验证失败：阿里云 AccessKey 无效或权限不足。"
+        if status == 404 or has_any([
+            "domainnotbelongtouser", "domainrecordnotbelongtouser",
+            "domainnameinvalid", "invaliddomainname", "missingparameter"
+        ]):
+            return "验证失败：阿里云域名配置有误（请检查域名与 RR 设置）。"
+
+    if provider == "route53":
+        if status in (401, 403) or has_any([
+            "invalidclienttokenid", "signaturedoesnotmatch",
+            "accessdenied", "expiredtoken", "missingauthenticationtoken"
+        ]):
+            return "验证失败：Route53 凭据无效或权限不足。"
+        if status in (400, 404) or has_any([
+            "nosuchhostedzone", "hosted zone", "invalidinput"
+        ]):
+            return "验证失败：Route53 Hosted Zone 或记录名称配置有误。"
+
+    if provider == "huawei":
+        if status in (401, 403) or has_any([
+            "x-auth-token", "token", "unauthorized", "forbidden", "apigw.0301"
+        ]):
+            return "验证失败：华为云 Token 无效或权限不足。"
+        if status in (400, 404) or has_any(["zone", "recordset", "not found", "dns."]):
+            return "验证失败：华为云 Zone ID 或记录名称配置有误。"
+
+    if provider == "gcp":
+        if status in (401, 403) or has_any([
+            "unauthenticated", "invalid credentials",
+            "permissiondenied", "insufficient authentication scopes"
+        ]):
+            return "验证失败：Google Cloud DNS Access Token 无效或权限不足。"
+        if status in (400, 404) or has_any(["managedzone", "project", "not found"]):
+            return "验证失败：Google Cloud DNS 项目、托管区或记录名称配置有误。"
+
+    if provider == "azure":
+        if status in (401, 403) or has_any([
+            "invalidauthenticationtoken", "authorizationfailed",
+            "expiredauthenticationtoken", "authenticationfailed"
+        ]):
+            return "验证失败：Azure DNS Access Token 无效或权限不足。"
+        if status in (400, 404) or has_any([
+            "parentresourcenotfound", "resourcenotfound", "dnszones", "resource group"
+        ]):
+            return "验证失败：Azure DNS 订阅、资源组、Zone 或记录配置有误。"
+
+    if isinstance(exc, requests.exceptions.HTTPError) and status:
+        return f"验证失败：{provider_name} 接口返回异常（HTTP {status}）。"
+
+    return f"验证失败：{provider_name} 接口校验失败，请检查网络或凭据配置。"
+
+
+def _verify_azure_profile(config, target_label):
+    try:
+        current_ip = get_current_dns_ip_azure(config)
+    except Exception as exc:
+        return False, None, _verify_provider_error_message("azure", exc, target_label)
+
+    if current_ip:
+        return True, current_ip, ""
+
+    try:
+        dns_cfg = config.get("dns", {}).get("azure", {})
+        subscription_id = _dns_required(dns_cfg, "subscription_id", "azure")
+        resource_group = _dns_required(dns_cfg, "resource_group", "azure")
+        zone_name = _dns_required(dns_cfg, "zone_name", "azure")
+        api_version = str(dns_cfg.get("api_version", "2018-05-01")).strip()
+        zone_url = (
+            "https://management.azure.com/"
+            f"subscriptions/{subscription_id}/resourceGroups/{resource_group}/"
+            f"providers/Microsoft.Network/dnsZones/{zone_name}"
+            f"?api-version={api_version}"
+        )
+        zone_resp = requests.get(zone_url, headers=_azure_headers(config), timeout=15)
+    except Exception as exc:
+        return False, None, _verify_provider_error_message("azure", exc, target_label)
+
+    if zone_resp.status_code == 200:
+        return False, None, _verify_missing_a_record_message(target_label)
+    if zone_resp.status_code in (401, 403):
+        return False, None, "验证失败：Azure DNS Access Token 无效或权限不足。"
+    if zone_resp.status_code == 404:
+        return False, None, "验证失败：Azure DNS 订阅、资源组或 Zone 配置有误。"
+    return False, None, f"验证失败：Azure DNS 接口返回异常（HTTP {zone_resp.status_code}）。"
+
+
 def _create_dns_profile(config):
     temp_cfg = _build_empty_dns_wizard_config(config)
-    _run_dns_provider_wizard(temp_cfg, auto_save=False)
+    if not _run_dns_provider_wizard(temp_cfg, auto_save=False):
+        print("已取消新增配置。")
+        return False
     new_profile = _build_dns_profile_from_config(temp_cfg)
     missing = _dns_profile_missing_fields(new_profile)
     if missing:
@@ -1009,7 +1352,9 @@ def _edit_dns_profile(config):
 
     temp_cfg = copy.deepcopy(config)
     _apply_dns_profile_to_runtime_config(temp_cfg, selected)
-    _run_dns_provider_wizard(temp_cfg, auto_save=False)
+    if not _run_dns_provider_wizard(temp_cfg, auto_save=False):
+        print("已取消修改配置。")
+        return False
     updated = _build_dns_profile_from_config(
         temp_cfg,
         profile_id=str(selected.get("id", "")),
@@ -1075,10 +1420,10 @@ def manage_dns_profiles(config):
     while True:
         print("\n待更新域名配置管理：")
         _print_dns_profiles(config, show_index=False)
-        print("1. 新增配置")
-        print("2. 修改配置")
-        print("3. 删除配置")
-        print("4. 返回上一级")
+        print("1、新增配置")
+        print("2、修改配置")
+        print("3、删除配置")
+        print("4、返回上一级")
         action = input("> ").strip()
         if not action:
             action = "4"
@@ -1097,29 +1442,140 @@ def manage_dns_profiles(config):
         print("无效输入，请重试。")
 
 
+def _parse_telegram_chat_ids(raw_value):
+    return [c.strip() for c in str(raw_value or "").split(",") if c.strip()]
+
+
+def _mask_chat_id(chat_id):
+    chat_id = str(chat_id or "").strip()
+    if len(chat_id) <= 4:
+        return chat_id or "未知"
+    return f"{chat_id[:2]}***{chat_id[-2:]}"
+
+
+def _send_telegram_message(config, chat_id, text, parse_mode="HTML", disable_web_page_preview=True, timeout=10):
+    tg = config.get("telegram", {})
+    token = str(tg.get("bot_token", "")).strip()
+    if not token:
+        return False, "未配置 Telegram Bot Token"
+    if not chat_id:
+        return False, "未配置 Telegram Chat ID"
+
+    base_url = _get_preferred_worker_base_url(config).rstrip("/")
+    auth_key = _get_admin_auth_key(config)
+    req_headers = {"x-auth-key": auth_key} if auth_key else {}
+    proxy_url = f"{base_url}/tg/bot{token}/sendMessage"
+    direct_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": str(chat_id).strip(),
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": disable_web_page_preview
+    }
+
+    def _parse_tg_error(status, body):
+        if isinstance(body, dict):
+            if str(body.get("error", "")).strip().lower() == "access denied":
+                return "TG代理鉴权失败（缺少或错误 auth_key）"
+            desc = str(body.get("description", "")).strip()
+            low = desc.lower()
+            if "chat not found" in low:
+                return "Chat ID 无效或机器人未建立会话（请先私聊机器人并发送 /start）"
+            if "bot was blocked by the user" in low:
+                return "机器人被该用户屏蔽（请先取消屏蔽并发送 /start）"
+            if "forbidden" in low and desc:
+                return f"权限错误（{desc}）"
+            if desc:
+                return desc
+        return f"HTTP {status}"
+
+    def _post(url, headers):
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        status = getattr(resp, "status_code", 0)
+        body = {}
+        try:
+            body = resp.json()
+        except Exception:
+            body = {}
+        if status == 200 and (not isinstance(body, dict) or body.get("ok") is not False):
+            return True, ""
+        return False, _parse_tg_error(status, body)
+
+    try:
+        ok, reason = _post(proxy_url, req_headers)
+    except Exception as e:
+        ok, reason = False, _brief_request_error(e)
+    if ok:
+        return True, ""
+
+    should_fallback_direct = reason.startswith("TG代理鉴权失败") or reason.startswith("HTTP 404")
+    if should_fallback_direct:
+        try:
+            return _post(direct_url, {})
+        except Exception as e:
+            return False, _brief_request_error(e)
+    return False, reason
+
+
 def configure_telegram_push(config):
     tg = config.setdefault("telegram", {})
     print("\nTelegram Bot 推送设置：")
     tg["bot_token"] = _prompt_text(
-        "Bot Token（可留空）",
+        "Bot Token（填写你申请的Telegram Bot Token）",
         str(tg.get("bot_token", "")).strip(),
         allow_empty=True,
     )
     tg["chat_id"] = _prompt_text(
-        "Chat ID（多个用英文逗号分隔，可留空）",
+        "Chat ID（填写你的Telegram ID,可通过@userinfobot查询）",
         str(tg.get("chat_id", "")).strip(),
         allow_empty=True,
     )
     save_config(config)
     print("Telegram 推送配置已保存。")
 
+    token = str(tg.get("bot_token", "")).strip()
+    chat_ids = _parse_telegram_chat_ids(tg.get("chat_id", ""))
+    if not token or not chat_ids:
+        print("提示：Bot Token 或 Chat ID 为空，已跳过有效性验证。")
+        return
+
+    if not re.match(r"^\d{6,}:[A-Za-z0-9_-]{20,}$", token):
+        print("提示：Bot Token 格式可能不正确，仍尝试进行连通性验证。")
+
+    print("正在验证 Telegram 推送配置并发送测试消息...")
+    test_text = (
+        "✅ <b>Telegram 推送配置验证成功</b>\n"
+        "<b>说明:</b> 后续测速与DNS更新结果将推送到此会话。"
+    )
+    success_count = 0
+    for chat_id in chat_ids:
+        ok, reason = _send_telegram_message(
+            config,
+            chat_id,
+            test_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            timeout=10
+        )
+        if ok:
+            success_count += 1
+            print(f"  ✓ 验证消息已发送至 {_mask_chat_id(chat_id)}")
+        else:
+            print(f"  ✗ {_mask_chat_id(chat_id)} 验证失败（{reason}）")
+    if success_count == len(chat_ids):
+        print("Telegram 配置验证通过。")
+    elif success_count > 0:
+        print("Telegram 配置部分通过，请检查失败的 Chat ID。")
+    else:
+        print("Telegram 配置验证失败，请检查 Bot Token、Chat ID 或网络后重试。")
+
 
 def manage_system_settings(config):
     while True:
         print("\n系统设置：")
-        print("1. 设置Telegram Bot推送")
-        print("2. 设置自定义优选IP源地址")
-        print("3. 返回上一级")
+        print("1、设置Telegram Bot推送(用于推送系统相关测速结果信息)")
+        print("2、设置自定义优选IP源地址（根据https://github.com/wzlinbin/CloudFlareIP-RenewDNS 私有化部署CF Worker优选IP汇聚源）")
+        print("3、返回上一级")
         action = input("> ").strip()
         if not action:
             action = "3"
@@ -1161,18 +1617,22 @@ def cloudflare_request(config, method, url_suffix="", **kwargs):
         config.get('cloudflare', {}).get('auth_key')
         or _get_admin_auth_key(config)
     )
+    quiet_mode = bool(config.get("settings", {}).get("_runtime_quiet_cloudflare"))
 
     direct_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records{url_suffix}"
     
     # 尝试直连
     try:
-        print(f"正在尝试直连 Cloudflare API...")
+        if not quiet_mode:
+            print("正在连接 Cloudflare 接口...")
         res = requests.request(method, direct_url, headers=headers, timeout=10, **kwargs)
         if res.status_code == 200:
             return res
-        print(f"直连失败 (状态码: {res.status_code})，准备切换代理...")
-    except Exception as e:
-        print(f"直连异常 ({e})，准备切换代理...")
+        if not quiet_mode:
+            print("Cloudflare 直连不可用，已切换代理通道。")
+    except Exception:
+        if not quiet_mode:
+            print("Cloudflare 直连不可用，已切换代理通道。")
 
     # 回退代理
     if "api.cloudflare.com" in base_url:
@@ -1185,11 +1645,13 @@ def cloudflare_request(config, method, url_suffix="", **kwargs):
     proxy_url = f"{base_url}/cf/client/v4/zones/{zone_id}/dns_records{url_suffix}"
     
     try:
-        print(f"正在通过代理 {base_url} 访问 Cloudflare...")
+        if not quiet_mode:
+            print("正在通过代理通道访问 Cloudflare...")
         res = requests.request(method, proxy_url, headers=proxy_headers, timeout=15, **kwargs)
         return res
-    except Exception as e:
-        print(f"代理访问也失败了: {e}")
+    except Exception:
+        if not quiet_mode:
+            print("Cloudflare 接口暂不可用。")
         return None
 
 
@@ -1224,9 +1686,9 @@ def fetch_ips(config, current_ip=None):
         headers, auth_mode = _build_ip_api_headers(config, source_url, timeout)
         try:
             if auth_mode == "none-custom":
-                print(f"正在从自建IP源获取 IP 数据 (auth={auth_mode})")
+                print("正在从自建IP源获取 IP 数据...")
             else:
-                print(f"正在从软件官方接口获取 IP 数据 (auth={auth_mode})")
+                print("正在从软件官方接口获取 IP 数据...")
             resp = requests.get(source_url, headers=headers, timeout=timeout)
             resp.raise_for_status()
 
@@ -1998,20 +2460,30 @@ def update_dns_record(config, new_ip):
 # ============================================================
 def push_notification(config, message):
     """将结果通过 Telegram Bot 并发推送给一个或多个用户"""
-    token        = config['telegram']['bot_token']
-    chat_ids     = [c.strip() for c in str(config['telegram']['chat_id']).split(',') if c.strip()]
-    base_url     = _get_preferred_worker_base_url(config).rstrip('/')
-    auth_key     = _get_admin_auth_key(config)
-    req_headers  = {"x-auth-key": auth_key} if auth_key else {}
-    url          = f"{base_url}/tg/bot{token}/sendMessage"
+    tg = config.get("telegram", {})
+    token = str(tg.get("bot_token", "")).strip()
+    if not token:
+        print("未配置 Telegram Bot Token，已跳过推送。")
+        return
+
+    chat_ids = _parse_telegram_chat_ids(tg.get("chat_id", ""))
+    if not chat_ids:
+        print("未配置 Telegram Chat ID，已跳过推送。")
+        return
 
     def _send(chat_id):
-        payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
-        try:
-            requests.post(url, headers=req_headers, json=payload, timeout=10)
-            print(f"  ✓ 已推送至 {chat_id}")
-        except Exception as e:
-            print(f"  ✗ 推送至 {chat_id} 失败: {e}")
+        ok, _ = _send_telegram_message(
+            config,
+            chat_id,
+            message,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            timeout=10
+        )
+        if ok:
+            print(f"  ✓ 已推送至 {_mask_chat_id(chat_id)}")
+        else:
+            print(f"  ✗ 推送至 {_mask_chat_id(chat_id)} 失败")
 
     print("正在推送 Telegram 通知...")
     with ThreadPoolExecutor(max_workers=max(len(chat_ids), 1)) as executor:
@@ -2148,9 +2620,9 @@ def main():
 
             while True:
                 print("\n请选择操作（默认 2）：")
-                print("1. 新增/修改/删除 待更新域名配置")
-                print("2. 使用软件官方源进行测速并更新域名解析")
-                print("3. 自定义优选IP源进行测速并更新域名解析")
+                print("1、新增/修改/删除 待更新域名配置")
+                print("2、使用软件官方源进行测速并更新域名解析")
+                print("3、自定义优选IP源进行测速并更新域名解析")
 
                 sub_choice = input("> ").strip()
                 if not sub_choice:
@@ -2234,7 +2706,7 @@ def main():
                     return
                 print(f"已检测到 DNS 记录: {dns_target_label} -> {current_ip}")
         except Exception as e:
-            print(f"DNS 记录检查失败: {e}")
+            print("DNS 记录检查失败，请检查网络与配置后重试。")
             return
 
     # 4. 多轮测速：每轮保留该轮最优结果作为候选
@@ -2313,34 +2785,34 @@ def main():
 
                 try:
                     update_status = update_dns_record(config, sel_ip)
-                except Exception as e:
-                    print(f"DNS 更新失败: {e}")
+                except Exception:
+                    print("DNS 更新失败，请检查网络与配置后重试。")
                     continue
                 if update_status is True:
                     msg = (f"✅ <b>DNS 优选 IP 更新成功</b>\n"
-                           f"域名: <code>{_get_dns_target_label(config)}</code>\n"
-                           f"解析 IP: <b>{sel_ip}</b>\n"
-                           f"地区码: <b>{sel_reg}</b>\n"
-                           f"实测速度: <b>{sel_spd} MB/s</b>")
-                    push_notification(config, msg)
+                           f"<b>域名:</b> <code>{_escape_html(_get_dns_target_label(config))}</code>\n"
+                           f"<b>解析 IP:</b> <code>{_escape_html(sel_ip)}</code>\n"
+                           f"<b>地区码:</b> <b>{_escape_html(sel_reg)}</b>\n"
+                           f"<b>实测速度:</b> <b>{_escape_html(sel_spd)} MB/s</b>")
+                    push_notification(config, _append_ack_to_push_message(msg))
                 elif update_status == "NO_CHANGE":
                     print("状态: 当前 IP 已是最优，无需更新。")
                 else:
                     msg = (f"❌ <b>DNS 优选 IP 更新失败</b>\n"
-                           f"最优 IP: {sel_ip}\n"
-                           f"原因: API 调用报错，请检查日志或令牌权限。")
-                    push_notification(config, msg)
+                           f"<b>最优 IP:</b> <code>{_escape_html(sel_ip)}</code>\n"
+                           "原因: API 调用报错，请检查日志或令牌权限。")
+                    push_notification(config, _append_ack_to_push_message(msg))
                 _exit_with_pause(0)
                 return
 
             _, best_ip, best_spd, best_reg, _ = sorted_history[0]
             print("状态: DNS 自动更新已禁用，仅输出多轮候选与推荐结果。")
             msg = (f"💡 <b>CF 优选 IP 测速完成</b>\n"
-                   f"推荐 IP: <b>{best_ip}</b>\n"
-                   f"地区码: <b>{best_reg}</b>\n"
-                   f"实测速度: <b>{best_spd} MB/s</b>\n"
-                   f"<i>(已完成多轮测速，每轮最优均已作为候选)</i>")
-            push_notification(config, msg)
+                   f"<b>推荐 IP:</b> <code>{_escape_html(best_ip)}</code>\n"
+                   f"<b>地区码:</b> <b>{_escape_html(best_reg)}</b>\n"
+                   f"<b>实测速度:</b> <b>{_escape_html(best_spd)} MB/s</b>\n"
+                   "<i>(已完成多轮测速，每轮最优均已作为候选)</i>")
+            push_notification(config, _append_ack_to_push_message(msg))
             _exit_with_pause(0)
             return
 

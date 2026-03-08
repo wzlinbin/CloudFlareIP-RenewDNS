@@ -508,7 +508,7 @@ export default {
       });
     }
 
-    const isProtectedRoute = path === "/" || path === "/api/data" || path.startsWith("/tg") || path.startsWith("/cf");
+    const isProtectedRoute = path === "/" || path === "/api/data";
     let authContext = {
       authorized: true,
       role: "public",
