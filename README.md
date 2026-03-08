@@ -132,9 +132,9 @@ python main.py
 - Token 资源为：`https://management.azure.com/`
 - 需要 `subscription_id`、`resource_group`、`zone_name`、`record_name`
 
-## ☁️ Worker 部署（仅 cfworker.js）
+## ☁️私有化 Worker 部署（私有化自行部署cfworker.js，不使用本软件维护的官方源）
 
-部署说明见：
+私有化部署说明见：
 
 - [docs/WORKER_DEPLOY.md](docs/WORKER_DEPLOY.md)
 
