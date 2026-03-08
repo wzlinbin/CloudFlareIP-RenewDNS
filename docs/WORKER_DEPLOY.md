@@ -36,7 +36,7 @@ https://<你的worker域名>/cf/client/v4/user/tokens/verify
 
 ## 🔗 与主程序 main.py 对接
 
-`cfworker.js` 的聚合接口在根路径 `/`，不是 `/api/data`。
+`cfworker.js` 的聚合接口在根路径 `/`。
 
 在程序中配置“自定义优选IP源地址”时请填写：
 
@@ -44,14 +44,13 @@ https://<你的worker域名>/cf/client/v4/user/tokens/verify
 https://<你的worker域名>/
 ```
 
-## 🌐 自定义域名（可选）
+## 🌐 自定义域名（必看！）
 
-如需绑定自己的域名，可在 Cloudflare Dashboard 的 Worker 路由中配置：
+因国内无法访问Worker自带域名，请绑定自己的域名：
 
-- `https://your-domain.example.com/*`
 
 ## ❓ 常见问题
 
 - 打开 `/` 报错：检查 Worker 是否部署成功、域名是否生效
 - `/tg` 或 `/cf` 请求失败：检查上游 API Token/权限、目标接口是否可用
-- 主程序读不到数据：确认你填的是根路径 `/`，并非 `/api/data`
+- 主程序读不到数据：确认你填的地址能正确访问

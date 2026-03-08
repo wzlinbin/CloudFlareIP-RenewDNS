@@ -1,6 +1,6 @@
-# CloudFlareIP-RenewDNS 🚀
+# Optimal IP DNS Renewal Tool 🚀
 
-自动获取 Cloudflare 优选 IP，支持多轮测速，并可按结果自动更新多个 DNS 服务商解析记录。
+自动获取 Cloudflare 优选 IP，支持多轮测速，并按结果自动更新多个 DNS 服务商解析记录。
 
 ## ✨ 功能特性
 
@@ -38,7 +38,6 @@
 - Windows 10/11（推荐）
 - Python 3.10+（建议 3.12）
 - 依赖：`requests`
-- `cfst.exe` 与程序放同目录
 
 安装依赖：
 
@@ -54,15 +53,15 @@ pip install requests
 python main.py
 ```
 
-### 方式 B：运行打包好的 EXE
+### 方式 B：运行打包好的单文件 EXE（推荐）
 
-将以下文件放在同一目录后直接双击运行：
+当前发布为 **Optimal IP DNS Renewal Tool.exe**，直接双击即可运行：
 
-- `CFIP-RenewDNS.exe`
-- `cfst.exe`
-- `_internal` 目录（若是 `onedir` 打包）
+- `Optimal IP DNS Renewal Tool.exe`
 
-建议使用发布包：`dist/CFIP-RenewDNS.zip`。  
+
+> 说明：程序已将 `cfst.exe` 内嵌到单文件 EXE 内部。
+
 首次运行若无 `config.json`，程序会自动生成默认配置文件。
 
 ## 🧭 使用流程
@@ -80,9 +79,8 @@ python main.py
 4. 给你的机器人先发送一次 `/start`
 5. 获取你的 `Chat ID`：
    - 方式 1：使用 `@userinfobot`
-   - 方式 2：调用 `getUpdates` 查看 `chat.id`
 6. 在程序菜单 `系统设置 -> 设置Telegram Bot推送` 填入 Token 和 Chat ID
-7. 保存后程序会自动发一条测试消息验证配置
+7. 保存后程序会自动发送测试消息验证配置
 
 ## 🔑 各 DNS 服务商 API / Token 获取说明
 
@@ -153,9 +151,8 @@ python main.py
 
 ## 🔐 安全建议
 
-- 不要把含密钥的 `config.json` 上传到公开仓库
 - 建议使用最小权限 API Token
-- 测速前尽量关闭代理/VPN，避免结果失真
+- 测速前关闭代理/VPN，避免结果失真
 
 ## 🙏 致谢
 
