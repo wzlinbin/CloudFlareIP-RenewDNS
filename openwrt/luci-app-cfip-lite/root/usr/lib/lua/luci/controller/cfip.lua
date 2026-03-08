@@ -6,5 +6,5 @@ function index()
 		return
 	end
 
-	entry({"admin", "services", "cfip"}, cbi("cfip"), _("CFIP Lite"), 80).dependent = true
+	entry({"admin", "services", "cfip"}, cbi("cfip"), _("CFIP 优选"), 80).dependent = true
 end
