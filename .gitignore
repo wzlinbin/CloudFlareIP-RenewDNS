@@ -6,6 +6,7 @@ __pycache__/
 
 # Packaging artifacts
 build/
+build/CFIP-RenewDNS/
 dist/
 *.spec
 
